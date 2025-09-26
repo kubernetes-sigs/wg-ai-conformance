@@ -18,6 +18,12 @@ To participate, please comment on the relevant GitHub issues.
 Unresolved items will be discussed during the
 [recurring WG meeting](https://github.com/kubernetes/community/tree/master/wg-ai-conformance#meetings).
 
+## Designing AI Conformance Tests
+
+Discussions for how we design AI conformance tests are tracked using the
+[WG AI Conformance Tests Design](https://github.com/orgs/kubernetes-sigs/projects/118)
+GitHub Project.
+
 ## Community, discussion, contribution, and support
 
 Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
