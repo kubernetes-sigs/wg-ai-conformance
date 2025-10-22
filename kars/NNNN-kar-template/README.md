@@ -31,16 +31,6 @@ To get started with this template:
   start with the high-level sections and fill out details incrementally in
   subsequent PRs.
 
-Just because a KAR is merged does not mean it is complete or approved. Any KAR
-marked as `provisional` is a working document and subject to change. You can
-denote sections that are under active debate as follows:
-
-```
-<<[UNRESOLVED optional short context or usernames ]>>
-Stuff that is being argued.
-<<[/UNRESOLVED]>>
-```
-
 When editing KARS, aim for tightly-scoped, single-topic PRs to keep discussions
 focused. If you disagree with what is already in a document, open a new PR
 with suggested changes.
@@ -53,10 +43,9 @@ new details emerge that belong in the KAR, edit the KAR. Once a requirement has 
 The canonical place for the latest set of instructions (and the likely source
 of this file) is [here](/kars/NNNN-kar-template/README.md).
 
-**Note:** Any PRs to move a KAR to `implementable`, or significant changes once
+**Note:** Any PRs to move a KAR to `implemented`, or significant changes once
 it is marked `implementable`, must be approved by each of the KAR approvers.
-If none of those approvers (wg-ai-conformance leads) are still appropriate, 
-then changes to that list should be approved by the remaining approvers and/or
+If that is not possible, then changes to that list should be approved by the remaining approvers and/or
 SIG Architecture.
 -->
 
@@ -130,12 +119,11 @@ Document automated tests that have been added to the AI conformance test suite.
 <!--
 Major milestones in the lifecycle of a KAR should be tracked in this section.
 Major milestones might include:
-- the `Description` and `Motivation` sections being merged, signaling WG acceptance
+- the date the KAR is created and its status changed to implementable, signaling WG acceptance
 - the `Test Plan` section being merged, signaling agreement on a proposed test plan
-- the date the status changed to implementable from provisional
 - the first Kubernetes release where an initial version of the KAR was available as SHOULD
 - the version of Kubernetes where the KAR graduated to MUST
-- the date the status changed to implemented from implementable
+- the date the status changed to implemented from implementable, signaling completion
 - when the KAR was retired or superseded
 -->
 

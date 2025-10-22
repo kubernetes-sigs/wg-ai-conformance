@@ -5,7 +5,11 @@ authors:
 participating-sigs:
   - sig-aaa
   - sig-bbb
-status: provisional|implementable|implemented|deferred|rejected|withdrawn|replaced
+# The current status of this KAR. 
+# Implementable: Part of a Kubernetes release as a SHOULD or MUST, implementation is ongoing.
+# Implemented: Has been part of one or more Kubernetes releases and has graduated to MUST. 
+# Implementation is complete. Further changes should be made via new KARs.
+status: implementable|implemented|deferred|rejected|withdrawn|replaced
 creation-date: yyyy-mm-dd
 reviewers:
   - TBD
