@@ -1,7 +1,5 @@
 title: KAR Template
 kar-number: NNNN
-authors:
-  - "@jane.doe"
 participating-sigs:
   - sig-aaa
   - sig-bbb
@@ -11,12 +9,6 @@ participating-sigs:
 # Implementation is complete. Further changes should be made via new KARs.
 status: implementable|implemented|deferred|rejected|withdrawn|replaced
 creation-date: yyyy-mm-dd
-reviewers:
-  - TBD
-  - "@alice.doe"
-approvers:
-  - TBD
-  - "@oscar.doe"
 
 see-also:
   - "/kars/1234-another-kar"
