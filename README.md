@@ -21,7 +21,7 @@ Unresolved items will be discussed during the
 
 This process adopts the Kubernetes Enhancement Proposal (KEP) process as the basis for managing the lifecycle of Kubernetes AI conformance Requirements (KARs), including review, discussion, and approval.
 
-- **Requirement Proposal**: Propose each new Kubernetes AI conformance Requirement (KAR) as a GitHub issue, targeting a specific Kubernetes release. Requirements will be tracked and reviewed individually. This is similar to a KEP, but tracked as a KAR with an issue in this wg-ai-conformance repo.
+- **Requirement Proposal**: Propose each new Kubernetes AI conformance Requirement (KAR) as a GitHub issue. Create a PR for the KAR targeting a specific Kubernetes release. Progress for each requirement will be tracked using the GitHub issue and the KAR. Each requirement will be reviewed individually.
 - **Graduation Criteria**: Requirements will graduate from "SHOULD" to "MUST" stage in alignment with the process used for KEPs in each Kubernetes release cycle.
 - **Timeline Alignment**: The lifecycle for requirements will follow the Kubernetes release schedule: e.g. https://github.com/kubernetes/sig-release/blob/master/releases/release-1.35/README.md#timeline This timeline will be adopted starting Kubernetes v1.36.
   - **KEP/KAR Freeze**: Locks in the set of KARs to be considered for updates for a given Kubernetes release. No new requirements after KEP freeze.

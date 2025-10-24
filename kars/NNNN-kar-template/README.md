@@ -78,6 +78,9 @@ If applicable, make sure the required tests are referenced in the test plan sect
 - [ ] Automated tests for this requirement must be part of the AI confromance test suite
 - [ ] Demonstrate at least two real-world usage of SHOULD before graduating to MUST
 - [ ] Kubernetes core APIs must be GA
+<!--
+**Note:** We recommend that non-core APIs should be GA as well, but it is not required.
+-->
 
 ## Test Plan
 
@@ -112,4 +115,10 @@ Major milestones might include:
 - the version of Kubernetes where the KAR graduated to MUST
 - the date the status changed to implemented from implementable, signaling completion
 - when the KAR was retired or superseded
+-->
+
+## Related KARs
+
+<!--
+List KARS that are related. This is in case of additional requirements that come up after a KAR has already graduated to “implemented”
 -->
