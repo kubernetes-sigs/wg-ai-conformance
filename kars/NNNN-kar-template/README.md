@@ -24,7 +24,7 @@ To get started with this template:
 - [ ] **Fill out this file as best you can.**
   At minimum, you should fill in the "Description" sections.
 - [ ] **Create a PR for this KAR.**
-  Assign it to wg-ai-conformance leads who are sponsoring this process.
+  Assign it to ai-conformance-requirement-approvers to review and approve.
 
 When editing KARS, aim for tightly-scoped, single-topic PRs to keep discussions
 focused. If you disagree with what is already in a document, open a new PR
@@ -73,9 +73,10 @@ If applicable, make sure the required tests are referenced in the test plan sect
 
 **SHOULD**
 - [ ] Describe how users can test it for self-attestation with scripts, documentation, etc
+- [ ] Starting v1.37, new SHOULDs must include proposed automated tests in the automated tests section below
 
 **MUST**
-- [ ] Automated tests for this requirement must be part of the AI confromance test suite
+- [ ] Starting v1.37, new MUSTs must include automated tests that have been added to the AI confromance test suite
 - [ ] Demonstrate at least two real-world usage of SHOULD before graduating to MUST
 - [ ] Kubernetes core APIs must be GA
 <!--
@@ -87,21 +88,21 @@ If applicable, make sure the required tests are referenced in the test plan sect
 <!--
 **Note:** *Not required until targeted at a release.*
 The goal is to ensure that we don't accept requirements with inadequate ways to test them.
-Starting v1.37, automated tests are graduation criteria for MUSTs.
+Starting v1.37, new SHOULDs must include proposed automated tests and new MUSTs must include automated tests that have been added to the AI conformance test suite.
+For SHOULDs, users can run automated test or self-attestation following manual steps described in How We Might Test It section below.
 -->
 
 ### How We Might Test It
 <!--
 **Note:** *Not required until targeted at a release.*
-For SHOULD, describe what tests will be added to the AI conformance test suite. 
-Document scripts or steps a user can follow to test for self-attestation.
+This section should document scripts and manual steps to validate for self-attestation.
 -->
 
 ### Automated Tests
 
 <!--
 **Note:** *Not required until targeted at a release.*
-Document all the automated tests that have been added to the AI conformance test suite.
+Document all the automated tests for validating this requirement.
 -->
 
 ## Implementation History

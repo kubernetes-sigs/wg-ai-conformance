@@ -28,7 +28,7 @@ This process adopts the Kubernetes Enhancement Proposal (KEP) process as the bas
   - **Discussion and Refinement before Code Freeze**: After KEP/KAR freeze, all discussions, text refinement, any changes (including associated tests) for accepted requirements will happen as part of the PR review for KAR updates. Before the code freeze deadline for the given Kubernetes release, a PR with all the AI conformance requirements for that Kubernetes release in the form of conformance-versions/KubernetesAIConformance-1.NN.yaml and all changes for all KARs for that Kubernetes release must be reviewed, approved, and merged. 
   - **Post Code Freeze**: A PR with a copy of conformance-versions/KubernetesAIConformance-1.NN.yaml must be reviewed and merged in [cncf/ai-conformance](https://github.com/cncf/ai-conformance) to ensure transparency and clarity for the entire community. In the event a kubernetes feature does not reach GA and impacts the graduation of a KAR, we will need to reassess that KAR to rollback and update conformance-versions/KubernetesAIConformance-1.NN.yaml accordingly.
 - **Reviewers**: everyone in wg-ai-conformance
-- **Approvers**: wg-ai-conformance leads, SIG Arch leads (lazy consensus), and SIG Testing leads (for automated testing)
+- **Approvers**: ai-conformance-requirement-approvers group. For automated tests, SIG Testing and SIG Arch leads will be tagged for approval.
 - **Stage**: All requirements need to start with SHOULD and eventually graduate to MUST
 - **Requirement removal**: Criteria to remove a requirement is TBD
 
@@ -36,7 +36,7 @@ This process adopts the Kubernetes Enhancement Proposal (KEP) process as the bas
 ## Designing AI Conformance Tests
 
 Once there is community consensus on a requirement, the next step is to define how to verify it.
-For every MUST requirement, a corresponding test will be designed. Starting v1.37, automated tests are prerequisites for new MUSTs. This test design should be documented as part of the KAR and should be specific enough to be implemented in an automated fashion.
+Every requirement should have a corresponding test designed. Starting v1.37, automated tests are prerequisites for new SHOULDs and MUSTs. This test design should be documented as part of the KAR and should be specific enough to be implemented in an automated fashion.
 
 Discussions for how we design AI conformance tests are tracked using the
 [WG AI Conformance Tests Design](https://github.com/orgs/kubernetes-sigs/projects/118)
