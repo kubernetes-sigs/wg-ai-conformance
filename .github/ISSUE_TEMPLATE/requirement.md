@@ -10,7 +10,7 @@ assignees:
 
 - One-line requirement description:
 - Kubernetes AI Conformance Requirement: <!-- link to kubernetes-sigs/wg-ai-conformance file; if none yet, link to PR -->
-- Discussion Link: <!-- link to WG mailing list thread, meeting, or recording where the Requirement was discussed before KAR creation -->
+- Discussion Link: <!-- link to WG mailing list thread, meeting, or recording where the Requirement was discussed before KAR creation; if no discussion has happened yet, leave it blank -->
 - PRs by stage and milestone:
   - [ ] SHOULD - v1.xx
     - [ ] KAR (`kubernetes-sigs/wg-ai-conformance`) update PR(s):

@@ -53,7 +53,7 @@ any review.
 The CNCF Kubernetes AI Conformance defines a set of capabilities, APIs, and configurations that a Kubernetes cluster MUST offer, on top of standard CNCF Kubernetes Conformance, to reliably and efficiently run AI/ML workloads. This initiative aims to simplify AI/ML operations on Kubernetes, accelerate adoption, guarantee interoperability and portability for AI workloads, reduce the overall cost of ownership, and enable ecosystem growth on an industry-standard foundation.
 
 This section should produce high-quality, user-focused
-documentation for an AI conformance requirement that will be part of a corresponding Kubernetes release in https://github.com/cncf/ai-conformance. Vendors should be able to understand the requirement and submit conformance results for review and certification by the CNCF. A test implementer should be able to create automated tests based on this description.
+documentation for an AI conformance requirement that will be part of a corresponding Kubernetes release in https://github.com/cncf/k8s-ai-conformance. Vendors should be able to understand the requirement and submit conformance results for review and certification by the CNCF. A test implementer should be able to create automated tests based on this description.
 
 A good description should be one or two sentences in length.
 -->
