@@ -76,7 +76,7 @@ If applicable, make sure the required tests are referenced in the test plan sect
 - [ ] Starting v1.37, new SHOULDs must include proposed automated tests in the automated tests section below
 
 **MUST**
-- [ ] Starting v1.37, new MUSTs must include automated tests that have been added to the AI confromance test suite
+- [ ] Starting v1.37, new MUSTs must include automated tests that have been added to the AI conformance test suite
 - [ ] Demonstrate at least two real-world usage of SHOULD before graduating to MUST
 - [ ] Kubernetes core APIs must be GA
 <!--
