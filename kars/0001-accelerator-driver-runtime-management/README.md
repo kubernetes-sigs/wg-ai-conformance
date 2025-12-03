@@ -4,6 +4,8 @@
 
 Provide a verifiable mechanism for ensuring that compatible accelerator drivers and corresponding container runtime configurations are correctly installed and maintained on nodes with accelerators.
 
+**Conformance Strategy:** verification will initially prioritize common accelerator types that cover the majority of platforms. For platforms using specialized or less common variants, conformance may initially require manual verification until the automated test suite is expanded by community contributions.
+
 ## Motivation
 
 AI/ML workloads often have strict dependencies on specific versions of accelerator drivers and container runtimes. Incompatibility between these components is a common source of errors, leading to wasted resources and developer frustration. 
@@ -27,11 +29,13 @@ By providing a verifiable mechanism to ensure compatibility, platforms can signi
 
 ### How We Might Test It
 
-We should be able to use the verifiable machenism provided by the platform to ensure that the compatible accelerator driver and container runtime are installed and configured correctly on nodes with accelerators. This might be achieved by using labels and annotations on the nodes, or through DRA attributes.
+We should be able to use the verifiable mechanism provided by the platform to ensure that the compatible accelerator driver and container runtime are installed and configured correctly on nodes with accelerators. This might be achieved by using labels and annotations on the nodes, or through DRA attributes.
 
 ### Automated Tests
 
 An automated test could involve deploying a pod to a node with a specific accelerator type. The pod would execute a script that inspects the node's environment to determine the actual installed driver and runtime versions. This should be done by leveraging the verifiable mechanism provided by the platform.
+
+The automated tests will default to checking common accelerators (~80% of platforms). If the test encounters an accelerator variant it does not recognize, it will output an "Unknown" status rather than failing, signaling that manual verification is required. We expect the test suite to grow over time to support automated verification for all platforms.
 
 ## Implementation History
 
