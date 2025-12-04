@@ -2,7 +2,7 @@
 
 ## Description
 
-If accelerator supports GPU sharing, provide well-defined mechanisms for GPU sharing to improve utilization for workloads that do not require a full dedicated GPU. If hardware-level partitioning is supported, these fractional GPU resources should be exposed as distinct schedulable resources via DRA once it’s supported. If software-based sharing (e.g. time-slicing) is supported, device plugin should be used to allow oversubscription of GPUs, with a forward-looking path to DRA.
+For accelerators that support GPU sharing, provide well-defined mechanisms for GPU sharing to improve utilization for workloads that do not require a full dedicated GPU. If hardware-level partitioning is supported, these fractional GPU resources should be exposed as distinct schedulable resources. If software-based sharing (e.g. time-slicing) is supported, then oversubscription of GPUs should be allowed. Once the accelerator supports these features as part of DRA, then the platform should use the DRA mechanism.
 
 ## Motivation
 
