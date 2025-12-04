@@ -33,7 +33,7 @@ We should be able to use the verifiable mechanism provided by the platform to en
 
 ### Automated Tests
 
-An automated test could involve deploying a pod to a node with a specific accelerator type. The pod would execute a script that inspects the node's environment to determine the actual installed driver and runtime versions. This should be done by leveraging the verifiable mechanism provided by the platform.
+An automated test could involve deploying a pod to a node with a specific accelerator type. The pod would execute a script that inspects the node's environment to determine the actual installed driver and runtime versions. This should be compared to the versions provided by verifiable mechanism provided by the platform to confirm the mechanism reflects the actual state.
 
 The automated tests will default to checking common accelerators (~80% of platforms). If the test encounters an accelerator variant it does not recognize, it will output an "Unknown" status rather than failing, signaling that manual verification is required. We expect the test suite to grow over time to support automated verification for all platforms.
 
