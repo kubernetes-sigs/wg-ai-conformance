@@ -2,7 +2,7 @@
 
 ## Description
 
-If accelerator supports virtualized accelerator technologies (e.g. vGPU), provide well-defined mechanisms for  these to be exposed and managed (via DRA once that is supported), maintaining consistency with physical fractional GPUs.
+For accelerators that support virtualized accelerator technologies (e.g. vGPU), provide well-defined mechanisms for these to be exposed and managed, maintaining consistency with physical fractional GPUs. Once the accelerator supports these features as part of DRA, then the platform should use the DRA mechanism.
 
 ## Motivation
 
@@ -23,15 +23,14 @@ AI/ML workloads on Kubernetes need virtualized accelerators because they allow G
 
 ### How We Might Test It
 
-We can test this capability by deploying workloads that request physical fractional GPUs and vGPUs through the same DRA, verifying that the scheduler consistently allocates, isolates, and accounts for them using identical semantics.
+We can test this capability by deploying workloads that request physical fractional GPUs and vGPUs through the same DRA mechanism, verifying that the scheduler consistently allocates, isolates, and accounts for them using identical semantics.
 
 ### Automated Tests
 
 Implement an e2e test that assumes DRA (resource.k8s.io/v1) is enabled and a GPU DRA driver is installed:
-1. Creates two DeviceClass objects, e.g. dc-physical-gpu and dc-vgpu, and two ResourceClaimTemplates that each reference one of these.
+1. Deploy two DeviceClass objects (create them if not already part of the DRA driver), e.g. dc-physical-gpu and dc-vgpu, and two ResourceClaimTemplates that each reference one of these.
 1. For each template, instantiates 2 almost identical test pods that consume the claims via ResourceClaimTemplates.
-1. In the test harness, asserts that all pods become Running, that pod.spec.nodeName matches nodes advertising the expected device type (physical vs vGPU via DRA attributes), and that per-pod health-check scripts (e.g. accelerator_probe.sh) exit with code 0.
-1. Collects and compares basic metrics (allocated device count, visible memory, isolation checks like unique device IDs) between the physical and virtual variants to confirm that allocation, isolation, and accounting semantics are consistent without any change to the workload spec other than which template it references.
+1. In the test harness, asserts that all pods become Running on nodes with expected device type (physical vs vGPU via DRA attributes), and that per-pod health-check scripts (e.g. accelerator_probe.sh) should exit with code 0. The script would inspect the node's environment to determine the actual installed GPU device ID using `lspci`.
 
 ## Implementation History
 
