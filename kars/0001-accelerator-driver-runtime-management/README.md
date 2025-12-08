@@ -2,7 +2,7 @@
 
 ## Description
 
-Provide a verifiable mechanism for ensuring that compatible accelerator drivers and corresponding container runtime configurations are correctly installed and maintained on nodes with accelerators.
+Provide a verifiable mechanism for ensuring that compatible accelerator drivers and corresponding container runtime configurations are correctly installed and maintained on nodes with accelerators. Once the accelerator supports exposing driver and runtime version information as part of DRA, then the platform should use the DRA mechanism for verification.
 
 **Conformance Strategy:** verification will initially prioritize common accelerator types that cover the majority of platforms. For platforms using specialized or less common variants, conformance may initially require manual verification until the automated test suite is expanded by community contributions.
 
