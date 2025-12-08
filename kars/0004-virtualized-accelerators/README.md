@@ -2,7 +2,9 @@
 
 ## Description
 
-For accelerators that support virtualized accelerator technologies (e.g. vGPU), provide well-defined mechanisms for these to be exposed and managed, maintaining consistency with physical fractional GPUs. Once the accelerator supports these features as part of DRA, then the platform should use the DRA mechanism.
+For accelerators that support virtualized accelerator technologies (e.g. vGPU), provide well-defined mechanisms for these to be exposed and managed, maintaining consistency with physical fractional GPUs. 
+
+Forward-looking: Once the accelerator supports virtualized accelerator technologies as part of DRA, then the platform should use the DRA mechanism.
 
 ## Motivation
 
@@ -27,10 +29,17 @@ We can test this capability by deploying workloads that request physical fractio
 
 ### Automated Tests
 
-Implement an e2e test that assumes DRA (resource.k8s.io/v1) is enabled and a GPU DRA driver is installed:
-1. Deploy two DeviceClass objects (create them if not already part of the DRA driver), e.g. dc-physical-gpu and dc-vgpu, and two ResourceClaimTemplates that each reference one of these.
-1. For each template, instantiates 2 almost identical test pods that consume the claims via ResourceClaimTemplates.
-1. In the test harness, asserts that all pods become Running on nodes with expected device type (physical vs vGPU via DRA attributes), and that per-pod health-check scripts (e.g. accelerator_probe.sh) should exit with code 0. The script would inspect the node's environment to determine the actual installed GPU device ID using `lspci`.
+An automated test would involve the following steps:
+1. Deploying test pods requesting one or more vGPUs e.g. 
+```yaml
+resources:
+  limits:
+    "nvidia.com/gpu": 1 # or vendor.com/vfio-device: "1" 
+```
+1. The pods should succesfully be running on a node with the vGPUs.
+1. The pods would execute a script that inspects the accelerator health and no errors returned.
+
+The automated tests will default to checking common accelerators (~80% of platforms). If the test encounters an accelerator variant it does not recognize, it will output an "Unknown" status rather than failing, signaling that manual verification is required. We expect the test suite to grow over time to support automated verification for all platforms.
 
 ## Implementation History
 
