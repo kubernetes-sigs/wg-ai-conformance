@@ -2,7 +2,9 @@
 
 ## Description
 
-For accelerators that support GPU sharing, provide well-defined mechanisms for GPU sharing to improve utilization for workloads that do not require a full dedicated GPU. If hardware-level partitioning is supported, these fractional GPU resources should be exposed as distinct schedulable resources. If software-based sharing (e.g. time-slicing) is supported, then oversubscription of GPUs should be allowed. Once the accelerator supports these features as part of DRA, then the platform should use the DRA mechanism.
+For accelerators that support static GPU sharing, provide well-defined mechanisms for GPU sharing to improve utilization for workloads that do not require a full dedicated GPU. If hardware-level partitioning is supported, then these fractional GPU resources should be exposed as schedulable resources. If software-based sharing (e.g. time-slicing) is supported, then oversubscription of GPUs should be allowed. 
+
+Forward-looking: Once the accelerator supports static GPU sharing as part of DRA, then the platform should use the DRA mechanism for static GPU sharing. Once the accelerator supports dynamic GPU sharing as part of DRA and the partitionable devices feature is GA, then the platform should use the DRA mechanism for dynamic GPU sharing. 
 
 ## Motivation
 
@@ -23,11 +25,28 @@ AI/ML workloads on Kubernetes need GPU sharing because it dramatically improves 
 
 ### How We Might Test It
 
-We should be able to use the verifiable mechanism provided by the platform to ensure that a single physical GPU can be exposed as multiple allocatable GPU resources and scheduled by Kubernetes. Create functional tests that verify multiple workloads requesting multiple logical GPUs can be scheduled and are running on the same physical GPU. Another test to ensure over allocating logical GPUs is blocked. 
+We should be able to use the verifiable mechanism provided by the platform to ensure that a single physical GPU can be exposed as multiple allocatable GPU resources and scheduled by Kubernetes. Create functional tests that verify multiple workloads requesting multiple logical GPUs can be scheduled and are running on the same physical GPU.
 
 ### Automated Tests
 
-An automated test could involve deploying ResourceClaimTemplate and ResourceClaim for shared logical GPUs, pods using the ResourceClaimTemplate get scheduled onto the same node as all the ResourceClaim allocations, and all pods are running on that node. The pod would execute a script that inspects the accelerator health and no errors returned.
+An automated test could involve the following steps:
+1. Get node information to verify node's `Allocatable` field includes statically configured shared GPUs
+1. Deploying one pod requesting one or more shared logical GPUs e.g. 
+```yaml
+resources:
+  limits:
+    "nvidia.com/gpu": 1
+```
+or 
+```yaml
+resources:
+  limits:
+    "nvidia.com/mig-1g.5gb": 1
+```
+1. The pods should succesfully be running on a node with the statically configured logical GPUs and the same physical GPU.
+1. The pods would execute a script that inspects the accelerator health and no errors returned.
+
+The automated tests will default to checking common accelerators (~80% of platforms). If the test encounters an accelerator variant it does not recognize, it will output an "Unknown" status rather than failing, signaling that manual verification is required. We expect the test suite to grow over time to support automated verification for all platforms.
 
 ## Implementation History
 
