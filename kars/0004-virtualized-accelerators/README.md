@@ -8,7 +8,7 @@ Forward-looking: Once the accelerator supports virtualized accelerator technolog
 
 ## Motivation
 
-AI/ML workloads on Kubernetes need virtualized accelerators because they allow GPU capacity to be flexibly carved out and delivered even in virtualized or multi-tenant environments where physical devices aren’t directly assignable. Maintaining consistency with physical fractional GPUs ensures that workloads, scheduling, policies, and user expectations remain the same across both physical and virtual backends, enabling portability and avoiding fragmented, vendor-specific resource models.
+AI/ML workloads on Kubernetes need virtualized accelerators because they allow GPU capacity to be flexibly carved out and delivered even in virtualized or multi-tenant environments where physical devices aren’t directly assignable. Maintaining consistency with the API and request mechanisms of physical fractional GPUs ensures that workloads, scheduling, policies, and user expectations remain the same across both physical and virtual backends, enabling portability and avoiding fragmented, vendor-specific resource models.
 
 ## Graduation Criteria
 
