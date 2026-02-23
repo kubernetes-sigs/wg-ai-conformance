@@ -26,7 +26,7 @@ Disaggregated serving is becoming a standard architectural pattern for efficient
 
 We can verify this capability by deploying an open-source disaggregated inference framework and verifying that it runs and works as expected. 
 
-First, deploy a gateway provider. Then, deploy a disaggregated inference solution. Expose the gateway and send a test inference request. Finally, verify that the inference request is successful.
+First, deploy a gateway provider. Then, deploy a disaggregated inference solution and run a model that supports disaggregated inference on it. Expose the gateway and send a test inference request. Finally, verify that the inference request is successful.
 
 ### Automated Tests
 
