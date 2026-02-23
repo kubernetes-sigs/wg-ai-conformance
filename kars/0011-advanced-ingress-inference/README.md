@@ -32,23 +32,17 @@ For SHOULDs, users can run automated test or self-attestation following manual s
 
 ### How We Might Test It
 
-First, verify GAIE CRDs are installed. Then, verify a `GatewayClass` with an inference-aware controller exists.
-
-Finally, GAIE's [official conformance suite](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/main/conformance) can be used to verify the implementation.
+GAIE's [official conformance suite](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/main/conformance) can be used to verify the implementation.
 
 ### Automated Tests
 
 The test will be written in go, and the logic looks like the following:
 
 ```bash
-# First, verify GAIE CRDs are installed
-kubectl get crd inferencepools.inference.networking.k8s.io inferenceobjectives.inference.networking.k8s.io inferencemodelrewrites.inference.networking.k8s.io
-
-# Then, verify a `GatewayClass` with an inference-aware controller exists
-kubectl get gatewayclass
-
+# Run GAIE official conformance suite
 git clone https://github.com/kubernetes-sigs/gateway-api-inference-extension.git  
-cd gateway-api-inference-extension/conformance  
+cd gateway-api-inference-extension/conformance
+kubectl get gatewayclass # get the gatewayclass name
 go test . -args -gateway-class <gatewayclass_name>
 ```
 
