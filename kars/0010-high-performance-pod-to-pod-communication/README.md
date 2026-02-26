@@ -10,7 +10,7 @@ Forward-looking: Once the network resource supports DRA, then the platform shoul
 
 AI/ML workloads, particularly distributed training and inference, require high-throughput, low-latency pod-to-pod communication. These workloads often rely on specialized network hardware (e.g., RDMA-capable NICs, high-speed interconnects) that must be explicitly attached to pods. Without a standardized mechanism for discovering and allocating these network resources, users face fragmented tooling, inconsistent behavior across platforms, and difficulty ensuring workloads are scheduled on nodes with the appropriate network capabilities.
 
-By leveraging Dynamic Resource Allocation (DRA) for network resources, platforms can provide a consistent, Kubernetes-native way to expose high-performance network interfaces to pods. This enables workloads to discover available network characteristics and make informed scheduling decisions, improving portability and reducing the operational burden of running distributed AI/ML workloads on Kubernetes.
+By leveraging Dynamic Resource Allocation (DRA) for network resources, platforms can provide a consistent, Kubernetes-native way to expose secondary network interfaces to pods. This enables workloads to discover available network characteristics and make informed scheduling decisions, improving portability and reducing the operational burden of running distributed AI/ML workloads on Kubernetes.
 
 ## Graduation Criteria
 
@@ -29,19 +29,19 @@ By leveraging Dynamic Resource Allocation (DRA) for network resources, platforms
 
 Validate the following observable outcomes:
 
-1. **Multiple network interfaces are available to pods:** A pod scheduled on a node with high-performance network hardware has access to additional network interfaces beyond the default pod network.
-2. **Network resource characteristics are discoverable:** The characteristics of available high-performance network resources (e.g., interface type, bandwidth, RDMA capability) are published and queryable within the cluster, enabling workloads and schedulers to make informed decisions.
-3. **Pods are scheduled to nodes with the required network resources:** When a workload requires a specific high-performance network capability, it is scheduled only on nodes where that capability is available.
-4. **Pod-to-pod communication functions over the high-performance interface:** Two pods on nodes with high-performance networking can exchange data over the specialized interface, confirming end-to-end connectivity.
+1. **Multiple network interfaces are available to pods:** A pod scheduled on a node with multiple network interfaces has access to secondary network interfaces beyond the default pod network.
+2. **Network resource characteristics are discoverable:** The characteristics of available secondary network interfaces (e.g., interface type, bandwidth, RDMA capability) are published and queryable within the cluster, enabling workloads and schedulers to make informed decisions.
+3. **Pods are scheduled to nodes with the required network resources:** When a workload requires a secondary network interface, it is scheduled only on nodes where that network interface is available.
+4. **Pod-to-pod communication functions over the secondary interface:** Two pods on nodes with secondary network interfaces can exchange data over the specialized interface, confirming end-to-end connectivity.
 
 ### Automated Tests
 
 Automated tests should verify the outcomes above:
 
-- Deploy a pod to a node with high-performance network hardware and confirm that the pod's network namespace contains the expected additional network interface(s).
-- Query the cluster for published network resource characteristics and validate that they accurately describe the available high-performance network capabilities.
+- Deploy a pod to a node with secondary network interface and confirm that the pod's network namespace contains the expected additional network interface(s).
+- Query the cluster for published secondary network resource.
 - Deploy a workload requesting a specific network capability and verify it is scheduled on an appropriate node.
-- Deploy two pods with access to high-performance network interfaces and verify successful pod-to-pod data transfer over those interfaces.
+- Deploy two pods with access to secondary network interfaces and verify successful pod-to-pod data transfer over those interfaces.
 
 ## Implementation History
 
