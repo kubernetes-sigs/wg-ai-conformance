@@ -3,7 +3,7 @@ To run these AI Conformance tests, you must have:
 
 - Golang: Installed on your local machine.
 - Kubeconfig: A valid kubeconfig file with cluster-admin permissions for the target cluster.
-- Accelerator Node Pool: The cluster must have nodes with accelerators and the corresponding drivers/DRA drivers installed.
+- Accelerator Node Pool with DRA drivers: The cluster must have nodes with accelerators and the corresponding DRA drivers installed. Make sure your nodes allow testing pods to be scheduled on them (e.g. no taints that prevent scheduling).
 - Network Access: The test machine must be able to reach the Kubernetes API server.
 
 ## Running the Tests
