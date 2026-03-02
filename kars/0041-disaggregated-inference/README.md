@@ -2,11 +2,11 @@
 
 ## Description
 
-Support the deployment and operation of disaggregated inference architectures. To be conformant, the platform should demonstrate that it can successfully install and run a disaggregated inference solution (e.g., vLLM with separate prefill/decode instances, llm-d, or Dynamo). This ensures the platform provides the necessary networking, scheduling, and hardware capabilities to support modern disaggregated inference workloads.
+Support the deployment and operation of disaggregated inference architectures. To be conformant, the platform should demonstrate that it can successfully install and run a disaggregated inference solution (e.g., vLLM, SGLang, llm-d, or Dynamo, with separate instances for distinct phases like prefill and decode). Disaggregated serving splits phases such as prefill and decode into separately scalable components so each phase can match different compute/memory/network needs, improving GPU utilization and tail latency while enabling higher throughput under mixed and bursty LLM workloads.
 
 ## Motivation
 
-Disaggregated serving is becoming a standard architectural pattern for efficient Large Language Model (LLM) serving. By splitting prefill and decode phases, operators can optimize hardware utilization (e.g., compute-bound vs. memory-bound phases) and improve latency. Frameworks like vLLM, llm-d, and Dynamo facilitate this modern architecture, but they require robust underlying Kubernetes scheduling and high-bandwidth, low-latency networking to seamlessly transfer the K/V cache between pods.
+Disaggregated serving is becoming a standard architectural pattern for efficient Large Language Model (LLM) serving. By splitting prefill and decode phases, operators can optimize hardware utilization (e.g., compute-bound vs. memory-bound phases) and improve latency. Inference backends like vLLM, SGLang, TensorRT-LLM , etc and Kubernetes frameworks like llm-d, Dynamo, etc facilitate this modern architecture, which depends on Kubernetes scheduling/topology controls and strong east‑west connectivity, because intermediate decode state (e.g., KV/cache blocks and coordination metadata) must be exchanged between pods with low overhead, especially when they are placed on different nodes.
 
 ## Graduation Criteria
 
@@ -27,6 +27,8 @@ Disaggregated serving is becoming a standard architectural pattern for efficient
 We can verify this capability by deploying an open-source disaggregated inference framework and verifying that it runs and works as expected. 
 
 First, deploy a gateway provider. Then, deploy a disaggregated inference solution and run a model that supports disaggregated inference on it. Expose the gateway and send a test inference request. Finally, verify that the inference request is successful.
+
+In addition, verify that the components are correctly disaggregated by ensuring that the distinct phases (e.g., prefill and decode) are running in separate pods, and that intermediate state (like KV cache) is successfully transferred across pods. This can be validated by checking that the same request ID (or correlation ID) appears in the logs of the separate pods handling the distinct phases.
 
 ### Automated Tests
 
