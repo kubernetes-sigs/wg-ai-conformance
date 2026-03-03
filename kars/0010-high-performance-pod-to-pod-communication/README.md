@@ -2,9 +2,7 @@
 
 ## Description
 
-If high performance pod-to-pod communication is needed, then provide well-defined mechanisms for these specialized network resources to be managed and exposed such that their characteristics should be discoverable to enable informed scheduling or workload configuration and to enable pods to attach to multiple network interfaces.
-
-Forward-looking: Once the network resource supports DRA, then the platform should use the DRA mechanism.
+If high performance pod-to-pod communication is needed, then provide well-defined mechanisms for these specialized network resources to be managed and exposed such that their characteristics should be discoverable to enable informed scheduling or workload configuration and to enable pods to attach to multiple network interfaces. Platforms should use DRA as the mechanism to manage and expose these specialized network resources (e.g., DRANET).
 
 ## Motivation
 
@@ -30,7 +28,7 @@ By leveraging Dynamic Resource Allocation (DRA) for network resources, platforms
 Validate the following observable outcomes:
 
 1. **Multiple network interfaces are available to pods:** A pod scheduled on a node with multiple network interfaces has access to secondary network interfaces beyond the default pod network.
-2. **Network resource characteristics are discoverable:** The characteristics of available secondary network interfaces (e.g., interface type, bandwidth, RDMA capability) are published and queryable within the cluster, enabling workloads and schedulers to make informed decisions.
+2. **Network resource characteristics are discoverable:** The characteristics of available secondary network interfaces (e.g., interface type, bandwidth, RDMA capability, PCI bus ID, NUMA node affinity) are published and queryable within the cluster, enabling workloads and schedulers to make informed decisions.
 3. **Pods are scheduled to nodes with the required network resources:** When a workload requires a secondary network interface, it is scheduled only on nodes where that network interface is available.
 4. **Pod-to-pod communication functions over the secondary interface:** Two pods on nodes with secondary network interfaces can exchange data over the specialized interface, confirming end-to-end connectivity.
 
