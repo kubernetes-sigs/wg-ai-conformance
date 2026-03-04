@@ -1,6 +1,6 @@
-# ai-conformance
+# Kubernetes AI Conformance
 
-Proposals and discussions for [AI Conformance](https://github.com/kubernetes/community/tree/master/sig-architecture#ai-conformance).
+Proposals and discussions for [Kubernetes AI Conformance](https://github.com/kubernetes/community/tree/master/sig-architecture#ai-conformance) subproject owned by [SIG Architecture](https://github.com/kubernetes/community/tree/master/sig-architecture). You can find the conformance program in [cncf/k8s-ai-conformance](https://github.com/cncf/k8s-ai-conformance).
 
 ## Defining AI Conformance Requirements
 
@@ -23,7 +23,7 @@ This process adopts the Kubernetes Enhancement Proposal (KEP) process as the bas
 
 - **Requirement Proposal**: Propose each new Kubernetes AI conformance Requirement (KAR) as a GitHub issue. Create a PR for the KAR targeting a specific Kubernetes release. Progress for each requirement will be tracked using the GitHub issue and the KAR. Each requirement will be reviewed individually.
 - **Graduation Criteria**: Requirements will graduate from "SHOULD" to "MUST" stage in alignment with the process used for KEPs in each Kubernetes release cycle.
-- **Timeline Alignment**: The lifecycle for requirements will follow the Kubernetes release schedule: e.g. https://github.com/kubernetes/sig-release/blob/master/releases/release-1.35/README.md#timeline This timeline will be adopted starting Kubernetes v1.36.
+- **Timeline Alignment**: The lifecycle for requirements will follow the Kubernetes release schedule. For example, [this timeline](https://github.com/kubernetes/sig-release/blob/master/releases/release-1.35/README.md#timeline) will be adopted starting Kubernetes v1.36.
   - **KEP/KAR Freeze**: Locks in the set of KARs to be considered for updates for a given Kubernetes release. No new requirements after KEP freeze.
   - **Discussion and Refinement before Code Freeze**: After KEP/KAR freeze, all discussions, text refinement, any changes (including associated tests) for accepted requirements will happen as part of the PR review for KAR updates. Before the code freeze deadline for the given Kubernetes release, a PR with all the AI conformance requirements for that Kubernetes release in the form of conformance-versions/KubernetesAIConformance-1.NN.yaml and all changes for all KARs for that Kubernetes release must be reviewed, approved, and merged. 
   - **Post Code Freeze**: A PR with a copy of conformance-versions/KubernetesAIConformance-1.NN.yaml must be reviewed and merged in [cncf/k8s-ai-conformance](https://github.com/cncf/k8s-ai-conformance) to ensure transparency and clarity for the entire community. In the event a kubernetes feature does not reach GA and impacts the graduation of a KAR, we will need to reassess that KAR to rollback and update conformance-versions/KubernetesAIConformance-1.NN.yaml accordingly.
