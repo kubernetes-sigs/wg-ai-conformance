@@ -49,7 +49,7 @@ Learn how to engage with the Kubernetes community on the [community page](http:/
 You can reach the maintainers of this project at:
 
 - [Slack channel](https://kubernetes.slack.com/messages/wg-ai-conformance)
-- [Mailing List](https://groups.google.com/a/kubernetes.io/g/wg-ai-conformance)
+- [Mailing List](https://groups.google.com/a/kubernetes.io/g/sig-architecture)
 
 ### Code of conduct
 
