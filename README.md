@@ -5,12 +5,12 @@ Proposals and discussions for [AI Conformance](https://github.com/kubernetes/com
 ## Defining AI Conformance Requirements
 
 Discussions for AI conformance requirements are now tracked using the
-[WG AI Conformance Requirements](https://github.com/orgs/kubernetes-sigs/projects/114)
+[AI Conformance Requirements](https://github.com/orgs/kubernetes-sigs/projects/114)
 GitHub Project, shifting from the original
 [Google Doc](https://docs.google.com/document/d/1hXoSdh9FEs13Yde8DivCYjjXyxa7j4J8erjZPEGWuzc/edit?tab=t.0).
 
 Each requirement is tracked as a GitHub issue with the following workflow and status label:
-- **Implementable**: Has been accepted by the working group for a Kubernetes release.
+- **Implementable**: Has been accepted by the AI Conformance program for a Kubernetes release.
 - **Implemented**: Has been part of one or more Kubernetes releases in the [cncf/k8s-ai-conformance](https://github.com/cncf/k8s-ai-conformance) repository and has graduated to MUST. Implementation is complete. Further changes should be made via new KARs.
 
 To participate, please comment on the relevant GitHub issues and pull requests.
@@ -39,7 +39,7 @@ Once there is community consensus on a requirement, the next step is to define h
 Every requirement should have a corresponding test designed. Starting v1.37, automated tests are prerequisites for new SHOULDs and MUSTs. This test design should be documented as part of the KAR and should be specific enough to be implemented in an automated fashion.
 
 Discussions for how we design AI conformance tests are tracked using the
-[WG AI Conformance Tests Design](https://github.com/orgs/kubernetes-sigs/projects/118)
+[AI Conformance Tests Design](https://github.com/orgs/kubernetes-sigs/projects/118)
 GitHub Project.
 
 ## Community, discussion, contribution, and support
