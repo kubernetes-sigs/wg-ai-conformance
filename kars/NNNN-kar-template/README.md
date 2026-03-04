@@ -10,7 +10,7 @@ updates.
 
 To get started with this template:
 
-- [ ] **Create an issue in kubernetes-sigs/wg-ai-conformance**
+- [ ] **Create an issue in kubernetes-sigs/ai-conformance**
   When filing an AI conformance requirement tracking issue, please make sure to complete all
   fields in that template. One of the fields asks for a link to the KAR. You
   can leave that blank until this KAR is filed, and then go back to the
@@ -110,7 +110,7 @@ Document all the automated tests for validating this requirement.
 <!--
 Major milestones in the lifecycle of a KAR should be tracked in this section.
 Major milestones might include:
-- the date the KAR is created and its status changed to implementable, signaling WG acceptance
+- the date the KAR is created and its status changed to implementable, signaling acceptance
 - the `Test Plan` section being merged, signaling agreement on a proposed test plan
 - the first Kubernetes release where an initial version of the KAR was available as SHOULD
 - the version of Kubernetes where the KAR graduated to MUST
