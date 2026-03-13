@@ -67,6 +67,9 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 			Name:   "single-gpu",
 			ResourceClaimTemplateName: &testResourceTemplateName,
 		}}
+		t.Cleanup(func() {
+			clientset.CoreV1().Pods(namespace).Delete(ctx, podName, metav1.DeleteOptions{})
+		})
 		runPodWithClaim(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("prober")}, claims)
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "prober", true)
 	})
@@ -74,6 +77,9 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 	// Getting a GPU from inside a Pod that does not request a GPU should fail
 	t.Run("NegativeIsolationTest", func(t *testing.T) {
 		podName := "neg-pod"
+		t.Cleanup(func() {
+			clientset.CoreV1().Pods(namespace).Delete(ctx, podName, metav1.DeleteOptions{})
+		})
 		runPodWithClaim(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("prober")}, nil)
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "prober", false)
 	})
@@ -85,6 +91,9 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 			Name:   "single-gpu",
 			ResourceClaimTemplateName: &testResourceTemplateName,
 		}}
+		t.Cleanup(func() {
+			clientset.CoreV1().Pods(namespace).Delete(ctx, podName, metav1.DeleteOptions{})
+		})
 		runPodWithClaim(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("authorized"), acceleratorProbingContainer("unauthorized")}, claims)
 
 		// The first container can access the GPU, the second cannot
