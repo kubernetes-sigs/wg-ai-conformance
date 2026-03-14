@@ -29,8 +29,8 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
 	if err != nil {
-        t.Fatalf("Error building kubeconfig: %v", err)
-    }
+		t.Fatalf("Error building kubeconfig: %v", err)
+	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -48,19 +48,19 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		}
 
 		// Poll until the namespace is actually gone; this is needed because the namespace needs to release resources for rerunning tests
-    err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-        _, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-        if apierrors.IsNotFound(err) {
-            return true, nil
-        }
-        return false, nil
-    })
-    if err != nil {
-        t.Errorf("CLEANUP FAILURE: Failed to delete namespace %s: %v. " +
-                 "Please ensure this namespace is terminated manually to avoid resource leaks." +
-                 "Rerunning the tests might fail if the namespace is not deleted.", 
-                 namespace, err)
-    }
+		err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
+			_, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, nil
+		})
+		if err != nil {
+			t.Errorf("CLEANUP FAILURE: Failed to delete namespace %s: %v. "+
+				"Please ensure this namespace is terminated manually to avoid resource leaks."+
+				"Rerunning the tests might fail if the namespace is not deleted.",
+				namespace, err)
+		}
 	})
 
 	checkDRA(ctx, t, clientset)
@@ -70,7 +70,7 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 	t.Run("PositiveAccessTest", func(t *testing.T) {
 		podName := "pos-pod"
 		claims := []corev1.PodResourceClaim{{
-			Name:   "claim",
+			Name:                      "claim",
 			ResourceClaimTemplateName: &testResourceTemplateName,
 		}}
 		t.Cleanup(func() {
@@ -94,7 +94,7 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 	t.Run("MultiContainerIsolationTest", func(t *testing.T) {
 		podName := "multi-container-pod"
 		claims := []corev1.PodResourceClaim{{
-			Name:   "claim",
+			Name:                      "claim",
 			ResourceClaimTemplateName: &testResourceTemplateName,
 		}}
 		t.Cleanup(func() {
