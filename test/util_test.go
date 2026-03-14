@@ -82,11 +82,11 @@ func checkDRA(ctx context.Context, t *testing.T, c *kubernetes.Clientset) {
 	}
 
 	if len(slices.Items) == 0 {
-		t.Fatal("No ResourceSlices found! Ensure the DRA driver is running and nodes have available accelerators.")
+		t.Fatal("ENVIRONMENT ERROR: No ResourceSlices found! Ensure the DRA driver is running and nodes have available accelerators.")
 	}
 
 	for _, slice := range slices.Items {
-		t.Logf("Found ResourceSlice: %s (Node: %s, Driver: %s)", slice.Name, *slice.Spec.NodeName, slice.Spec.Driver)
+		t.Logf("Checking environment: Found ResourceSlice: %s (Node: %s, Driver: %s)", slice.Name, *slice.Spec.NodeName, slice.Spec.Driver)
 	}
 }
 
