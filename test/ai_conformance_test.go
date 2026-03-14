@@ -11,8 +11,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-var kubeconfig *string
-
 // TestSecureAcceleratorAccess verifies the Secure Accelerator Access requirement.
 // A Pod without an accelerator request must NOT see device nodes or have access to drivers.
 // Ref: https://github.com/cncf/k8s-ai-conformance/blob/main/docs/AIConformance-1.35.yaml#L83-L89
@@ -49,13 +47,12 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 
 	checkDRA(ctx, t, clientset)
 	setupTestEnvironment(ctx, t, clientset, namespace)
-	testResourceTemplateName := "gpu-claim-template"
 
-	// Getting a GPU from inside a Pod that requests a GPU should succeed
+	// Getting an accelerator from inside a Pod that requests an accelerator should succeed
 	t.Run("PositiveAccessTest", func(t *testing.T) {
 		podName := "pos-pod"
 		claims := []corev1.PodResourceClaim{{
-			Name:   "single-gpu",
+			Name:   "claim",
 			ResourceClaimTemplateName: &testResourceTemplateName,
 		}}
 		t.Cleanup(func() {
@@ -65,7 +62,7 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "prober", true)
 	})
 
-	// Getting a GPU from inside a Pod that does not request a GPU should fail
+	// Getting an accelerator from inside a Pod that does not request an accelerator should fail
 	t.Run("NegativeIsolationTest", func(t *testing.T) {
 		podName := "neg-pod"
 		t.Cleanup(func() {
@@ -75,11 +72,11 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "prober", false)
 	})
 
-	// Getting a GPU from another container inside a Pod should fail
+	// Getting an accelerator from another container inside a Pod should fail
 	t.Run("MultiContainerIsolationTest", func(t *testing.T) {
 		podName := "multi-container-pod"
 		claims := []corev1.PodResourceClaim{{
-			Name:   "single-gpu",
+			Name:   "claim",
 			ResourceClaimTemplateName: &testResourceTemplateName,
 		}}
 		t.Cleanup(func() {
@@ -87,7 +84,7 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		})
 		runPodWithClaim(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("authorized"), acceleratorProbingContainer("unauthorized")}, claims)
 
-		// The first container can access the GPU, the second cannot
+		// The first container can access the accelerator, the second cannot
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "authorized", true)
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "unauthorized", false)
 	})
