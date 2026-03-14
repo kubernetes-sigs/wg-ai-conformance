@@ -8,9 +8,12 @@ To run these AI Conformance tests, you must have:
 
 ## Running the Tests
 
-Run the tests using the standard go test command. By default, it will look for your kubeconfig at ~/.kube/config.
+Run the tests using the standard go test command. You should run tests with the same release tag as your cluster version, to ensure compatibility with the Kubernetes AI conformance program.
+
+By default, the test looks for your kubeconfig at `~/.kube/config`. You can override this by setting the `KUBECONFIG` environment variable or using the `-kubeconfig` flag.
 
 ```bash
+export KUBECONFIG=/path/to/my/config # Optional
 go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>]
 ```
 
