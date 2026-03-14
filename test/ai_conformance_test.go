@@ -4,9 +4,12 @@ import (
 	"context"
 	"flag"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -43,6 +46,21 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		if err != nil {
 			t.Errorf("Failed to cleanup namespace: %v", err)
 		}
+
+		// Poll until the namespace is actually gone; this is needed because the namespace needs to release resources for rerunning tests
+    err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
+        _, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+        if apierrors.IsNotFound(err) {
+            return true, nil
+        }
+        return false, nil
+    })
+    if err != nil {
+        t.Errorf("CLEANUP FAILURE: Failed to delete namespace %s: %v. " +
+                 "Please ensure this namespace is terminated manually to avoid resource leaks." +
+                 "Rerunning the tests might fail if the namespace is not deleted.", 
+                 namespace, err)
+    }
 	})
 
 	checkDRA(ctx, t, clientset)
