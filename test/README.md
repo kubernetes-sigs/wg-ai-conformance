@@ -14,7 +14,8 @@ By default, the test looks for your kubeconfig at `~/.kube/config`. You can over
 
 ```bash
 export KUBECONFIG=/path/to/my/config # Optional
-go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>]
+# Use '-accelerator-type' to specify the accelerator type (default to 'nvidia'; support for other types is being added).
+go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>] [-accelerator-type=<type>]
 ```
 
 ### Test Cases Covered
@@ -25,7 +26,7 @@ go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>]
 
 ## Vendor Customization & Neutrality
 
-The tests are designed to be vendor-neutral where possible, but hardware-level probing often requires vendor-specific commands (e.g., nvidia-smi). If your platform uses different hardware/software not covered by the tests, please file an issue to request support for your hardware/software. In the meantime, you will need to certify manually.
+The tests are designed to be vendor-neutral where possible, but hardware-level probing often requires vendor-specific configuration. If your platform uses different hardware/software not covered by the tests, please file an issue to request support for your hardware/software. In the meantime, you will need to certify manually.
 
 ### Opting Out
 

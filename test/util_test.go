@@ -41,7 +41,7 @@ var (
 
 func init() {
 	kubeconfig = flag.String(clientcmd.RecommendedConfigPathFlag, "", "absolute path to the kubeconfig file")
-	acceleratorType = flag.String("accelerator-type", "nvidia", "The type of accelerator to test")
+	acceleratorType = flag.String("accelerator-type", "nvidia", "The type of accelerator to test. Supported types: 'nvidia' (default). Support for other types is being added.")
 }
 
 // Setup namespace and DRA templates
