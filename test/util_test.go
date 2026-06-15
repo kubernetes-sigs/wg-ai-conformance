@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -65,6 +66,19 @@ var (
 	}
 	testResourceTemplateName = "accelerator-claim-template"
 	testRequestName          = "single-accelerator"
+
+	// DRA (Dynamic Resource Allocation) GA API group/version and the resource
+	// types it must serve for accelerator resource exposure & allocation.
+	draAPIGroupVersion   = "resource.k8s.io/v1"
+	requiredDRAResources = []string{
+		"deviceclasses",
+		"resourceclaims",
+		"resourceclaimtemplates",
+		"resourceslices",
+	}
+	// Verbs the API server must support for each DRA resource, mirroring the
+	// upstream Kubernetes conformance coverage cited in KAR-0051.
+	requiredDRAVerbs = []string{"create", "update", "list", "patch", "delete"}
 )
 
 func init() {
@@ -88,6 +102,25 @@ func lookupAcceleratorConfig(name string) (AcceleratorConfig, error) {
 		return AcceleratorConfig{}, fmt.Errorf("unsupported accelerator type %q; supported types: %s", name, strings.Join(supported, ", "))
 	}
 	return cfg, nil
+}
+
+// newClientset builds a Kubernetes clientset from the configured kubeconfig.
+func newClientset(t *testing.T) *kubernetes.Clientset {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if *kubeconfig != "" {
+		loadingRules.ExplicitPath = *kubeconfig
+	}
+
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		t.Fatalf("Error building kubeconfig: %v", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("Error creating kubernetes client: %v", err)
+	}
+	return clientset
 }
 
 // Setup namespace and, for the DRA allocation mode, the ResourceClaimTemplate
@@ -741,4 +774,34 @@ func acceleratorProbingContainer(name string, cfg AcceleratorConfig) corev1.Cont
 
 func randomNamespaceName(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, rand.String(5))
+}
+
+// servedDRAResources discovers the resources served under resource.k8s.io/v1,
+// keyed by resource name. It fails the test if the DRA API group/version is not
+// enabled, since that means accelerators cannot be requested via DRA.
+func servedDRAResources(t *testing.T, c kubernetes.Interface) map[string]metav1.Verbs {
+	resources, err := c.Discovery().ServerResourcesForGroupVersion(draAPIGroupVersion)
+	if err != nil {
+		t.Fatalf("Failed to discover %s resources. Is the DRA API enabled? Error: %v", draAPIGroupVersion, err)
+	}
+
+	served := map[string]metav1.Verbs{}
+	for _, r := range resources.APIResources {
+		// Skip subresources such as resourceclaims/status.
+		if strings.Contains(r.Name, "/") {
+			continue
+		}
+		served[r.Name] = r.Verbs
+	}
+	return served
+}
+
+// verifyDRAVerbs checks that a DRA resource supports every verb required for
+// create/update/list/patch/delete operations.
+func verifyDRAVerbs(t *testing.T, resource string, verbs metav1.Verbs) {
+	for _, want := range requiredDRAVerbs {
+		if !slices.Contains(verbs, want) {
+			t.Errorf("DRA API resource %q does not support required verb %q (supported verbs: %v)", resource, want, verbs)
+		}
+	}
 }

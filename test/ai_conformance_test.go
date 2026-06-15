@@ -10,8 +10,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // TestSecureAcceleratorAccess verifies the Secure Accelerator Access requirement.
@@ -22,20 +20,7 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		flag.Parse()
 	}
 
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if *kubeconfig != "" {
-		loadingRules.ExplicitPath = *kubeconfig
-	}
-
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
-	if err != nil {
-		t.Fatalf("Error building kubeconfig: %v", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		t.Fatalf("Error creating kubernetes client: %v", err)
-	}
+	clientset := newClientset(t)
 
 	ctx := context.Background()
 	namespace := randomNamespaceName("ai-conformance")
@@ -129,4 +114,30 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "authorized", true)
 		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "unauthorized", false)
 	})
+}
+
+// TestAcceleratorResourceExposureAllocation verifies the Accelerator Resource
+// Exposure & Allocation requirement: all resource.k8s.io/v1 DRA API resources
+// must be enabled so workloads can request accelerators with fine-grained
+// semantics via Dynamic Resource Allocation.
+// Ref: https://github.com/kubernetes-sigs/ai-conformance/tree/main/kars/0051-accelerator-resource-exposure-allocation
+func TestAcceleratorResourceExposureAllocation(t *testing.T) {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	clientset := newClientset(t)
+	served := servedDRAResources(t, clientset)
+
+	// Each DRA resource type must be served and support the verbs needed for
+	// create/update/list/patch/delete operations.
+	for _, resource := range requiredDRAResources {
+		t.Run(resource, func(t *testing.T) {
+			verbs, ok := served[resource]
+			if !ok {
+				t.Fatalf("DRA API resource %s/%s is not served by the API server", draAPIGroupVersion, resource)
+			}
+			verifyDRAVerbs(t, resource, verbs)
+		})
+	}
 }

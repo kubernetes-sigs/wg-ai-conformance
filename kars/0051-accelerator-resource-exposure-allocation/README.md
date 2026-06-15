@@ -38,6 +38,8 @@ This requirement is covered by the upstream Kubernetes conformance test suite st
 
 See [test/conformance/testdata/conformance.yaml](https://github.com/kubernetes/kubernetes/blob/release-1.35/test/conformance/testdata/conformance.yaml#L2935-L2959) and the implementation in [test/e2e/dra/dra.go](https://github.com/kubernetes/kubernetes/blob/release-1.35/test/e2e/dra/dra.go).
 
+Additionally, the AI conformance test suite includes `TestAcceleratorResourceExposureAllocation` (see [test/ai_conformance_test.go](../../test/ai_conformance_test.go)), which uses the discovery API to verify that all four `resource.k8s.io/v1` DRA resource types (`DeviceClass`, `ResourceClaim`, `ResourceClaimTemplate`, `ResourceSlice`) are served and support create/update/list/patch/delete.
+
 ## Implementation History
 
 2026-03-12: KAR created
