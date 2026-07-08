@@ -31,7 +31,7 @@ Without proper isolation, a container could discover GPU devices it was never al
 
 ### Automated Tests
 
-Automated tests for this requirement are being developed in [#45](https://github.com/kubernetes-sigs/ai-conformance/pull/45), tracked by the test plan in [#27](https://github.com/kubernetes-sigs/ai-conformance/issues/27).
+Automated tests for this requirement were added in [#45](https://github.com/kubernetes-sigs/ai-conformance/pull/45) (DRA allocation) and extended with device-plugin allocation coverage, tracked by the test plan in [#27](https://github.com/kubernetes-sigs/ai-conformance/issues/27).
 
 ## Implementation History
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -11,27 +12,54 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 )
 
 type AcceleratorConfig struct {
+	// DeviceClass is the DRA DeviceClass that test ResourceClaims request
+	// devices from.
 	DeviceClass string
-	TaintKey    string
-	DevicePath  string
+	// DRADriver is the driver name expected in ResourceSlice.Spec.Driver for
+	// slices that back DeviceClass. In general a DeviceClass selects devices
+	// via CEL selectors and its name is not required to match any driver
+	// name; this per-vendor mapping makes the association explicit instead
+	// of assuming name equality. (Full CEL selector evaluation is out of
+	// scope for the environment probe.) For NVIDIA both happen to be
+	// "gpu.nvidia.com".
+	DRADriver string
+	// ExtendedResource is the device-plugin extended resource name for whole
+	// accelerators.
+	ExtendedResource string
+	TaintKey         string
+	DevicePath       string
 }
+
+// Allocation modes for granting accelerators to test pods. The conformance
+// requirement permits mediation by "device plugin or DRA", so both mechanisms
+// are supported.
+const (
+	allocationModeAuto         = "auto"
+	allocationModeDRA          = "dra"
+	allocationModeDevicePlugin = "device-plugin"
+)
 
 var (
 	kubeconfig         *string
 	acceleratorType    *string
+	allocationMode     *string
 	acceleratorConfigs = map[string]AcceleratorConfig{
 		"nvidia": {
-			DeviceClass: "gpu.nvidia.com",
-			TaintKey:    "nvidia.com/gpu",
-			DevicePath:  "/dev/nvidia*",
+			DeviceClass:      "gpu.nvidia.com",
+			DRADriver:        "gpu.nvidia.com",
+			ExtendedResource: "nvidia.com/gpu",
+			TaintKey:         "nvidia.com/gpu",
+			DevicePath:       "/dev/nvidia*",
 		},
 		// Add other vendors here
 	}
@@ -42,12 +70,34 @@ var (
 func init() {
 	kubeconfig = flag.String(clientcmd.RecommendedConfigPathFlag, "", "absolute path to the kubeconfig file")
 	acceleratorType = flag.String("accelerator-type", "nvidia", "The type of accelerator to test. Supported types: 'nvidia' (default). Support for other types is being added.")
+	allocationMode = flag.String("allocation-mode", allocationModeAuto,
+		"How test pods request accelerators: 'dra' (ResourceClaims), 'device-plugin' (extended resources such as nvidia.com/gpu), or 'auto' (default; prefer DRA when usable, otherwise fall back to the device plugin).")
 }
 
-// Setup namespace and DRA templates
-func setupTestEnvironment(ctx context.Context, t *testing.T, c *kubernetes.Clientset, ns string) {
+// lookupAcceleratorConfig resolves an -accelerator-type value to its config,
+// rejecting unknown types up front so a flag typo reports as a flag error
+// rather than a misleading cluster-environment error.
+func lookupAcceleratorConfig(name string) (AcceleratorConfig, error) {
+	cfg, ok := acceleratorConfigs[name]
+	if !ok {
+		supported := make([]string, 0, len(acceleratorConfigs))
+		for k := range acceleratorConfigs {
+			supported = append(supported, k)
+		}
+		sort.Strings(supported)
+		return AcceleratorConfig{}, fmt.Errorf("unsupported accelerator type %q; supported types: %s", name, strings.Join(supported, ", "))
+	}
+	return cfg, nil
+}
+
+// Setup namespace and, for the DRA allocation mode, the ResourceClaimTemplate
+func setupTestEnvironment(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, mode string, cfg AcceleratorConfig) {
 	if _, err := c.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("Failed to create namespace: %v", err)
+	}
+
+	if mode != allocationModeDRA {
+		return
 	}
 
 	template := &resourcev1.ResourceClaimTemplate{
@@ -58,7 +108,7 @@ func setupTestEnvironment(ctx context.Context, t *testing.T, c *kubernetes.Clien
 					Requests: []resourcev1.DeviceRequest{{
 						Name: testRequestName,
 						Exactly: &resourcev1.ExactDeviceRequest{
-							DeviceClassName: acceleratorConfigs[*acceleratorType].DeviceClass,
+							DeviceClassName: cfg.DeviceClass,
 							Count:           1,
 						},
 					}},
@@ -72,62 +122,581 @@ func setupTestEnvironment(ctx context.Context, t *testing.T, c *kubernetes.Clien
 	}
 }
 
-// Verifies that DRA is available and functional
-func checkDRA(ctx context.Context, t *testing.T, c *kubernetes.Clientset) {
-	t.Log("Checking for available ResourceSlices...")
+// resolvedEnvironment describes the allocation mechanism the test will
+// exercise and where accelerators live.
+type resolvedEnvironment struct {
+	mode string
+	// acceleratorNode is a Ready, schedulable node known to expose
+	// accelerators via the resolved mechanism. Every success path of the
+	// detection returns a concrete node, so this is always non-empty after
+	// resolveAllocationMode. Resolved at parent level so subtests remain
+	// self-contained under -run filtering.
+	acceleratorNode string
+	cfg             AcceleratorConfig
+}
 
-	slices, err := c.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+// resolveAllocationMode validates the flags and resolves the requested
+// allocation mode against what the cluster actually exposes, failing the test
+// with a clear environment error when the requested mechanism is unavailable.
+func resolveAllocationMode(ctx context.Context, t *testing.T, c kubernetes.Interface) resolvedEnvironment {
+	cfg, err := lookupAcceleratorConfig(*acceleratorType)
 	if err != nil {
-		t.Fatalf("Failed to list ResourceSlices: %v. Is the DRA API enabled?", err)
+		t.Fatalf("Invalid -accelerator-type: %v", err)
 	}
 
-	if len(slices.Items) == 0 {
-		t.Fatal("ENVIRONMENT ERROR: No ResourceSlices found! Ensure the DRA driver is running and nodes have available accelerators.")
+	mode, node, err := detectAllocationMode(ctx, c, *allocationMode, cfg, t.Logf)
+	if err != nil {
+		t.Fatalf("ENVIRONMENT ERROR: %v", err)
 	}
+	t.Logf("Secure accelerator access test running with allocation mode: %s (accelerator node: %s)", mode, node)
+	return resolvedEnvironment{mode: mode, acceleratorNode: node, cfg: cfg}
+}
 
-	for _, slice := range slices.Items {
-		t.Logf("Checking environment: Found ResourceSlice: %s (Node: %s, Driver: %s)", slice.Name, *slice.Spec.NodeName, slice.Spec.Driver)
+// detectAllocationMode resolves the requested mode against the cluster and
+// returns the mode plus an accelerator node it verified. In 'auto' mode DRA
+// is preferred when usable, with the device plugin as fallback; the explicit
+// modes return an error when the requested mechanism is unavailable so CI
+// runs stay deterministic.
+func detectAllocationMode(ctx context.Context, c kubernetes.Interface, requested string, cfg AcceleratorConfig, logf func(format string, args ...any)) (string, string, error) {
+	switch requested {
+	case allocationModeDRA:
+		node, err := checkDRAUsable(ctx, c, cfg, logf)
+		if err != nil {
+			return "", "", fmt.Errorf("allocation mode 'dra' requested but DRA is not usable: %w", err)
+		}
+		return allocationModeDRA, node, nil
+	case allocationModeDevicePlugin:
+		node, err := checkDevicePluginUsable(ctx, c, cfg, logf)
+		if err != nil {
+			return "", "", fmt.Errorf("allocation mode 'device-plugin' requested but no device-plugin capacity found: %w", err)
+		}
+		// Strict mode must actually prove device-plugin mediation. With the
+		// DRAExtendedResource feature (K8s 1.34+), a DeviceClass can map the
+		// same extended resource name to DRA, so an extended-resource request
+		// could be satisfied by DRA instead of the device plugin.
+		if err := checkExtendedResourceNotDRABacked(ctx, c, cfg); err != nil {
+			return "", "", fmt.Errorf("allocation mode 'device-plugin' requested but it would not be deterministic: %w", err)
+		}
+		return allocationModeDevicePlugin, node, nil
+	case allocationModeAuto:
+		node, draErr := checkDRAUsable(ctx, c, cfg, logf)
+		if draErr == nil {
+			logf("Auto-detected allocation mode: dra")
+			return allocationModeDRA, node, nil
+		}
+		logf("DRA not usable (%v); trying device plugin...", draErr)
+		node, dpErr := checkDevicePluginUsable(ctx, c, cfg, logf)
+		if dpErr == nil {
+			// The fallback must be attributable too: a DRA-backed extended
+			// resource would make the reported "device-plugin" mode wrong.
+			if err := checkExtendedResourceNotDRABacked(ctx, c, cfg); err != nil {
+				return "", "", fmt.Errorf("device-plugin fallback would not be deterministic: %w", err)
+			}
+			logf("Auto-detected allocation mode: device-plugin")
+			return allocationModeDevicePlugin, node, nil
+		}
+		return "", "", fmt.Errorf("no usable accelerator allocation mechanism found. DRA: %v. Device plugin: %v. "+
+			"Ensure a DRA driver advertises ResourceSlices or a device plugin advertises allocatable %s on a schedulable node",
+			draErr, dpErr, cfg.ExtendedResource)
+	default:
+		return "", "", fmt.Errorf("invalid -allocation-mode %q; supported values: %q, %q, %q",
+			requested, allocationModeAuto, allocationModeDRA, allocationModeDevicePlugin)
 	}
 }
 
-// Runs a pod with the specified containers and claims
-func runPodWithClaim(ctx context.Context, t *testing.T, c *kubernetes.Clientset, ns, name string, containers []corev1.Container, claims []corev1.PodResourceClaim) {
+// usableNodes returns the names of Ready, schedulable nodes.
+func usableNodes(ctx context.Context, c kubernetes.Interface) (map[string]corev1.Node, error) {
+	nodes, err := c.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+	usable := make(map[string]corev1.Node)
+	for _, node := range nodes.Items {
+		if node.Spec.Unschedulable || !isNodeReady(&node) {
+			continue
+		}
+		usable[node.Name] = node
+	}
+	return usable, nil
+}
+
+// checkDRAUsable verifies that DRA is usable for the accelerator under test:
+// the DeviceClass exists and at least one ResourceSlice from the configured
+// driver advertises devices reachable from a Ready, schedulable node. It
+// returns a concrete eligible node's name. DeviceClass existence alone is not
+// sufficient — a stale class without backing ResourceSlices, or slices whose
+// only node is down, cannot satisfy claims.
+func checkDRAUsable(ctx context.Context, c kubernetes.Interface, cfg AcceleratorConfig, logf func(format string, args ...any)) (string, error) {
+	if _, err := c.ResourceV1().DeviceClasses().Get(ctx, cfg.DeviceClass, metav1.GetOptions{}); err != nil {
+		return "", fmt.Errorf("failed to get DeviceClass %s (is the DRA API resource.k8s.io/v1 enabled?): %w", cfg.DeviceClass, err)
+	}
+
+	slices, err := c.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list ResourceSlices: %w", err)
+	}
+
+	usable, err := usableNodes(ctx, c)
+	if err != nil {
+		return "", err
+	}
+
+	// Consumers must ignore ResourceSlices whose pool generation is below the
+	// highest observed generation for that pool (older slices can linger
+	// with stale devices during a multi-slice pool update), and must treat a
+	// pool as unusable until all of its slices at that generation have been
+	// observed — ResourceSliceCount exists for exactly this check, and the
+	// scheduler's allocator ignores incomplete pools.
+	type poolInfo struct {
+		generation int64
+		expected   int64
+		observed   int64
+		consistent bool
+	}
+	pools := make(map[string]*poolInfo)
+	for _, slice := range slices.Items {
+		if slice.Spec.Driver != cfg.DRADriver {
+			continue
+		}
+		p, ok := pools[slice.Spec.Pool.Name]
+		if !ok || slice.Spec.Pool.Generation > p.generation {
+			pools[slice.Spec.Pool.Name] = &poolInfo{
+				generation: slice.Spec.Pool.Generation,
+				expected:   slice.Spec.Pool.ResourceSliceCount,
+				observed:   1,
+				consistent: true,
+			}
+			continue
+		}
+		if slice.Spec.Pool.Generation == p.generation {
+			p.observed++
+			if slice.Spec.Pool.ResourceSliceCount != p.expected {
+				p.consistent = false
+			}
+		}
+	}
+	poolUsable := func(name string) bool {
+		p := pools[name]
+		return p != nil && p.consistent && p.expected > 0 && p.observed == p.expected
+	}
+
+	sawDriverSlice := false
+	for _, slice := range slices.Items {
+		if slice.Spec.Driver != cfg.DRADriver ||
+			slice.Spec.Pool.Generation < pools[slice.Spec.Pool.Name].generation ||
+			!poolUsable(slice.Spec.Pool.Name) ||
+			allocatableDeviceCount(&slice) == 0 {
+			continue
+		}
+		sawDriverSlice = true
+		node, ok := sliceEligibleNode(&slice, usable, cfg)
+		if !ok {
+			continue
+		}
+		logf("Checking environment: Found ResourceSlice: %s (Node: %s, Driver: %s, Devices: %d)", slice.Name, node, slice.Spec.Driver, len(slice.Spec.Devices))
+		return node, nil
+	}
+	if sawDriverSlice {
+		return "", fmt.Errorf("ResourceSlices for driver %s exist, but none is reachable from a Ready, schedulable node", cfg.DRADriver)
+	}
+	return "", fmt.Errorf("no complete current-generation ResourceSlice with allocatable devices found for driver %s", cfg.DRADriver)
+}
+
+// allocatableDeviceCount counts a slice's devices that the test's
+// toleration-less claim could actually be allocated: devices carrying an
+// inline NoSchedule or NoExecute taint cannot satisfy it. Like DeviceClass
+// CEL selectors, administrator-applied DeviceTaintRule objects (alpha
+// resource.k8s.io/v1alpha3) are out of scope for this preflight.
+func allocatableDeviceCount(slice *resourcev1.ResourceSlice) int {
+	n := 0
+	for _, device := range slice.Spec.Devices {
+		if deviceTaintBlocked(&device) {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+func deviceTaintBlocked(device *resourcev1.Device) bool {
+	for _, taint := range device.Taints {
+		if taint.Effect == resourcev1.DeviceTaintEffectNoSchedule || taint.Effect == resourcev1.DeviceTaintEffectNoExecute {
+			return true
+		}
+	}
+	return false
+}
+
+// sliceEligibleNode resolves a ResourceSlice's node topology (exactly one of
+// nodeName, nodeSelector, allNodes, perDeviceNodeSelection is set) against
+// the usable (Ready, schedulable) nodes and returns a concrete eligible node.
+func sliceEligibleNode(slice *resourcev1.ResourceSlice, usable map[string]corev1.Node, cfg AcceleratorConfig) (string, bool) {
+	switch {
+	case slice.Spec.NodeName != nil:
+		if _, ok := usable[*slice.Spec.NodeName]; ok {
+			return *slice.Spec.NodeName, true
+		}
+	case slice.Spec.NodeSelector != nil:
+		return firstNodeMatchingSelector(slice.Spec.NodeSelector, usable, cfg)
+	case slice.Spec.AllNodes != nil && *slice.Spec.AllNodes:
+		return firstUsableNode(usable, cfg)
+	case slice.Spec.PerDeviceNodeSelection != nil && *slice.Spec.PerDeviceNodeSelection:
+		for _, device := range slice.Spec.Devices {
+			if deviceTaintBlocked(&device) {
+				continue
+			}
+			switch {
+			case device.NodeName != nil:
+				if _, ok := usable[*device.NodeName]; ok {
+					return *device.NodeName, true
+				}
+			case device.NodeSelector != nil:
+				if node, ok := firstNodeMatchingSelector(device.NodeSelector, usable, cfg); ok {
+					return node, true
+				}
+			case device.AllNodes != nil && *device.AllNodes:
+				return firstUsableNode(usable, cfg)
+			}
+		}
+	}
+	return "", false
+}
+
+func firstNodeMatchingSelector(selector *corev1.NodeSelector, usable map[string]corev1.Node, cfg AcceleratorConfig) (string, bool) {
+	matcher, err := nodeaffinity.NewNodeSelector(selector)
+	if err != nil {
+		// An unparseable selector cannot be proven to match any node.
+		return "", false
+	}
+	matching := make(map[string]corev1.Node, len(usable))
+	for name, node := range usable {
+		if matcher.Match(&node) {
+			matching[name] = node
+		}
+	}
+	return firstUsableNode(matching, cfg)
+}
+
+// firstUsableNode picks a deterministic node from the candidates, preferring
+// nodes that advertise the accelerator's extended resource: a broad
+// (allNodes/selector) ResourceSlice can nominally cover CPU-only nodes, and
+// pinning the negative isolation pod to one of those would make its pass
+// vacuous when the positive pod's placement is unavailable to refine it
+// (e.g. under -run subtest filtering).
+func firstUsableNode(usable map[string]corev1.Node, cfg AcceleratorConfig) (string, bool) {
+	if len(usable) == 0 {
+		return "", false
+	}
+	resourceName := corev1.ResourceName(cfg.ExtendedResource)
+	names := make([]string, 0, len(usable))
+	for name := range usable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		node := usable[name]
+		if q, ok := node.Status.Allocatable[resourceName]; ok && !q.IsZero() {
+			return name, true
+		}
+	}
+	return names[0], true
+}
+
+// checkDevicePluginUsable verifies that a device plugin advertises allocatable
+// accelerator capacity (e.g. nvidia.com/gpu) on at least one schedulable,
+// Ready node, and returns that node's name. NotReady nodes retain their
+// last-reported allocatable, so they must not count as usable capacity.
+func checkDevicePluginUsable(ctx context.Context, c kubernetes.Interface, cfg AcceleratorConfig, logf func(format string, args ...any)) (string, error) {
+	resourceName := corev1.ResourceName(cfg.ExtendedResource)
+
+	usable, err := usableNodes(ctx, c)
+	if err != nil {
+		return "", err
+	}
+
+	names := make([]string, 0, len(usable))
+	for name := range usable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		node := usable[name]
+		if q, ok := node.Status.Allocatable[resourceName]; ok && !q.IsZero() {
+			logf("Checking environment: Found Ready node %s with allocatable %s: %s", node.Name, resourceName, q.String())
+			return node.Name, nil
+		}
+	}
+	return "", fmt.Errorf("no schedulable Ready node advertises allocatable %s", resourceName)
+}
+
+// checkExtendedResourceNotDRABacked rejects strict device-plugin mode when a
+// DRA DeviceClass maps the configured extended resource name via
+// spec.extendedResourceName (DRAExtendedResource feature): the scheduler may
+// then satisfy the extended-resource request through DRA, so the test could
+// not prove device-plugin mediation. A cluster without the DRA API cannot
+// have such a mapping and passes trivially.
+func checkExtendedResourceNotDRABacked(ctx context.Context, c kubernetes.Interface, cfg AcceleratorConfig) error {
+	classes, err := c.ResourceV1().DeviceClasses().List(ctx, metav1.ListOptions{})
+	if apierrors.IsNotFound(err) {
+		// The DRA API is not served, so no DRA-backed extended resources can
+		// exist. Every other error (Forbidden, timeout, transient API
+		// failure) must fail closed — it does not prove the absence of a
+		// mapping.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to list DeviceClasses to verify %s is not DRA-backed: %w", cfg.ExtendedResource, err)
+	}
+	for _, class := range classes.Items {
+		if class.Spec.ExtendedResourceName != nil && *class.Spec.ExtendedResourceName == cfg.ExtendedResource {
+			return fmt.Errorf("DeviceClass %s maps extended resource %s to DRA (spec.extendedResourceName), so %s requests may be satisfied by DRA instead of the device plugin",
+				class.Name, cfg.ExtendedResource, cfg.ExtendedResource)
+		}
+	}
+	return nil
+}
+
+func isNodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// testPodConfig controls how buildTestPod grants accelerators.
+type testPodConfig struct {
+	// grantAccelerator grants the FIRST container one accelerator using mode.
+	grantAccelerator bool
+	mode             string
+	// nodeName pins the pod to a specific node (empty = let the scheduler
+	// place it). Used by the negative isolation test so its request-less pod
+	// probes an accelerator node instead of passing vacuously on a CPU node.
+	nodeName string
+	cfg      AcceleratorConfig
+}
+
+// buildTestPod constructs (without creating) a test pod. Pure function so the
+// claim/extended-resource wiring is unit-testable without a cluster.
+func buildTestPod(ns, name string, containers []corev1.Container, pc testPodConfig) (*corev1.Pod, error) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: corev1.PodSpec{
 			Containers:  containers,
-			Tolerations: []corev1.Toleration{{Key: acceleratorConfigs[*acceleratorType].TaintKey, Operator: "Exists", Effect: "NoSchedule"}}, // for scheduling on accelerator nodes with taints
+			NodeName:    pc.nodeName,
+			Tolerations: []corev1.Toleration{{Key: pc.cfg.TaintKey, Operator: "Exists", Effect: "NoSchedule"}}, // for scheduling on accelerator nodes with taints
 		},
 	}
 
-	// Only the first container is granted the claim
-	if len(claims) > 0 {
-		pod.Spec.Containers[0].Resources.Claims = []corev1.ResourceClaim{{Name: claims[0].Name}}
-		pod.Spec.ResourceClaims = claims
+	// Only the first container is granted the accelerator
+	if pc.grantAccelerator {
+		switch pc.mode {
+		case allocationModeDRA:
+			claimName := "claim"
+			pod.Spec.ResourceClaims = []corev1.PodResourceClaim{{
+				Name:                      claimName,
+				ResourceClaimTemplateName: &testResourceTemplateName,
+			}}
+			pod.Spec.Containers[0].Resources.Claims = []corev1.ResourceClaim{{Name: claimName}}
+		case allocationModeDevicePlugin:
+			resourceName := corev1.ResourceName(pc.cfg.ExtendedResource)
+			if pod.Spec.Containers[0].Resources.Limits == nil {
+				pod.Spec.Containers[0].Resources.Limits = corev1.ResourceList{}
+			}
+			pod.Spec.Containers[0].Resources.Limits[resourceName] = resource.MustParse("1")
+		default:
+			return nil, fmt.Errorf("unknown allocation mode %q", pc.mode)
+		}
 	}
 
-	_, err := c.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{})
+	return pod, nil
+}
+
+// runTestPod creates the pod described by pc, waits for it to reach Running,
+// and returns the running pod (so callers can read its scheduled node).
+func runTestPod(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, name string, containers []corev1.Container, pc testPodConfig) *corev1.Pod {
+	pod, err := buildTestPod(ns, name, containers, pc)
 	if err != nil {
+		t.Fatalf("Failed to build Pod %s: %v", name, err)
+	}
+
+	if _, err := c.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Pod: %v", err)
 	}
 
 	t.Logf("Waiting for Pod %s to be running...", name)
+	var running *corev1.Pod
 	err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
 		p, err := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
-		return p.Status.Phase == corev1.PodRunning, nil
+		if p.Status.Phase == corev1.PodRunning {
+			running = p
+			return true, nil
+		}
+		return false, nil
 	})
 
 	if err != nil {
-		p, _ := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
-		t.Fatalf("Pod %s failed to reach Running phase within 1m. Current phase: %s, Error: %v", name, p.Status.Phase, err)
+		phase := "unknown"
+		if p, gerr := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); gerr == nil {
+			phase = string(p.Status.Phase)
+		}
+		t.Fatalf("Pod %s failed to reach Running phase within 1m. Current phase: %s, Error: %v", name, phase, err)
+	}
+	return running
+}
+
+// deletePodAndWait deletes a pod and waits until the pod AND any
+// template-generated ResourceClaims are actually gone, so a subsequent
+// accelerator-requesting pod does not race the previous pod's device/claim
+// release (matters on single-accelerator nodes; generated claims are
+// garbage-collected asynchronously after pod deletion). known is the pod as
+// last observed by the caller (may be nil) — it supplies the generated claim
+// names when the live pod can no longer be fetched.
+func deletePodAndWait(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, name string, known *corev1.Pod) {
+	claimNames, err := podGeneratedClaims(ctx, c, ns, name, known)
+	if err != nil {
+		// Claim capture failed but deletion must still proceed.
+		t.Errorf("Failed to capture generated ResourceClaims of Pod %s (claim-release wait may be incomplete): %v", name, err)
+	}
+	if err := deleteAndAwaitRelease(ctx, c, ns, name, claimNames); err != nil {
+		t.Errorf("Cleanup of Pod %s incomplete; subsequent accelerator tests may race its device/claim release: %v", name, err)
 	}
 }
 
+// podGeneratedClaims returns the names of template-generated ResourceClaims
+// recorded in the pod's status, preferring the live object and falling back
+// to the caller's last-known copy. Whenever the status yields no claim names
+// (the pod was never observed, or its status has not been patched yet), it
+// scans the namespace for ResourceClaims owner-referenced by the pod — an
+// orphaned or not-yet-recorded generated claim can hold the accelerator well
+// after (or before) it appears in pod status.
+func podGeneratedClaims(ctx context.Context, c kubernetes.Interface, ns, name string, known *corev1.Pod) ([]string, error) {
+	p, err := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case err == nil:
+	case apierrors.IsNotFound(err):
+		p, err = known, nil
+	default:
+		// Fall back to the caller's copy, but surface the error — it does
+		// not prove the pod had no claims.
+		p = known
+	}
+	var claimNames []string
+	if p != nil {
+		for _, cs := range p.Status.ResourceClaimStatuses {
+			if cs.ResourceClaimName != nil {
+				claimNames = append(claimNames, *cs.ResourceClaimName)
+			}
+		}
+	}
+	if len(claimNames) == 0 {
+		// An empty status is not proof of no claims: the resourceclaim
+		// controller creates the generated ResourceClaim first and patches
+		// pod.status.resourceClaimStatuses afterwards, so cleanup can race
+		// that window (and a never-observed pod has no status at all).
+		claims, listErr := podOwnedClaims(ctx, c, ns, name)
+		if err == nil {
+			err = listErr
+		}
+		return claims, err
+	}
+	return claimNames, err
+}
+
+// podOwnedClaims lists the namespace's ResourceClaims and returns those
+// owner-referenced by the named Pod. The test namespace is isolated and pod
+// names are unique per subtest, so a name match identifies the owner.
+func podOwnedClaims(ctx context.Context, c kubernetes.Interface, ns, podName string) ([]string, error) {
+	claims, err := c.ResourceV1().ResourceClaims(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// DRA API not served — no generated claims can exist.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to list ResourceClaims to find claims generated for pod %s: %w", podName, err)
+	}
+	var claimNames []string
+	for _, claim := range claims.Items {
+		for _, owner := range claim.OwnerReferences {
+			if owner.Kind == "Pod" && owner.Name == podName {
+				claimNames = append(claimNames, claim.Name)
+				break
+			}
+		}
+	}
+	return claimNames, nil
+}
+
+// deleteAndAwaitRelease deletes the pod (tolerating NotFound), waits for it
+// to disappear, and then waits for every captured generated claim to be
+// deleted or deallocated. Claims are processed even when the pod was already
+// gone — generated claims are garbage-collected asynchronously and may
+// outlive the pod.
+func deleteAndAwaitRelease(ctx context.Context, c kubernetes.Interface, ns, name string, claimNames []string) error {
+	err := c.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete pod: %w", err)
+	}
+	if err == nil {
+		err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+			_, err := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		})
+		if err != nil {
+			return fmt.Errorf("pod not deleted before the cleanup deadline: %w", err)
+		}
+	}
+
+	// Final owner scan now that the pod is gone: the resourceclaim controller
+	// creates the generated claim before patching pod status, so a claim can
+	// appear after the pre-delete capture — this scan catches those. A
+	// racing reconciliation could in principle still create a dangling claim
+	// after this scan, but such a claim can no longer be published into pod
+	// status or allocated for the deleted pod, and garbage collection
+	// removes it — it cannot hold the accelerator against a later subtest.
+	lateClaims, err := podOwnedClaims(ctx, c, ns, name)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(claimNames))
+	for _, claimName := range claimNames {
+		seen[claimName] = true
+	}
+	for _, claimName := range lateClaims {
+		if !seen[claimName] {
+			claimNames = append(claimNames, claimName)
+		}
+	}
+
+	for _, claimName := range claimNames {
+		err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+			claim, err := c.ResourceV1().ResourceClaims(ns).Get(ctx, claimName, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			// A deallocated claim no longer holds devices even if the object
+			// briefly outlives the pod before garbage collection.
+			return claim.Status.Allocation == nil, nil
+		})
+		if err != nil {
+			return fmt.Errorf("generated ResourceClaim %s not released before the cleanup deadline: %w", claimName, err)
+		}
+	}
+	return nil
+}
+
 // Verify that the container has access to the hardware (e.g. GPU) by checking its logs
-func verifyHardwareInLogs(ctx context.Context, t *testing.T, c *kubernetes.Clientset, ns, podName, containerName string, expectSuccess bool) {
+func verifyHardwareInLogs(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, podName, containerName string, expectSuccess bool) {
 	var logs string
 	pass := false
 	var expectedText string
@@ -159,13 +728,13 @@ func verifyHardwareInLogs(ctx context.Context, t *testing.T, c *kubernetes.Clien
 }
 
 // Returns a container that probes for accelerator
-func acceleratorProbingContainer(name string) corev1.Container {
+func acceleratorProbingContainer(name string, cfg AcceleratorConfig) corev1.Container {
 	return corev1.Container{
 		Name:    name,
 		Image:   "ubuntu:22.04",
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{
-			fmt.Sprintf("if ls %s > /dev/null 2>&1; then echo 'RESULT: ACCELERATOR_FOUND'; else echo 'RESULT: ACCELERATOR_MISSING'; fi; sleep 3600", acceleratorConfigs[*acceleratorType].DevicePath),
+			fmt.Sprintf("if ls %s > /dev/null 2>&1; then echo 'RESULT: ACCELERATOR_FOUND'; else echo 'RESULT: ACCELERATOR_MISSING'; fi; sleep 3600", cfg.DevicePath),
 		},
 	}
 }

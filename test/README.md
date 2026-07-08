@@ -3,7 +3,7 @@ To run these AI Conformance tests, you must have:
 
 - Golang: Installed on your local machine.
 - Kubeconfig: A valid kubeconfig file with cluster-admin permissions for the target cluster.
-- Accelerator Node Pool with DRA drivers: The cluster must have nodes with accelerators and the corresponding DRA drivers installed. Make sure your nodes allow testing pods to be scheduled on them (e.g. no taints that prevent scheduling).
+- Accelerator Node Pool: The cluster must have nodes with accelerators exposed through the Kubernetes resource management framework — either a DRA driver (ResourceClaims against a DeviceClass such as `gpu.nvidia.com`) or a device plugin (extended resources such as `nvidia.com/gpu`). Make sure your nodes allow testing pods to be scheduled on them (e.g. no taints that prevent scheduling).
 - Network Access: The test machine must be able to reach the Kubernetes API server.
 
 ## Running the Tests
@@ -14,8 +14,15 @@ By default, the test looks for your kubeconfig at `~/.kube/config`. You can over
 
 ```bash
 export KUBECONFIG=/path/to/my/config # Optional
-# Use '-accelerator-type' to specify the accelerator type (default to 'nvidia'; support for other types is being added).
-go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>] [-accelerator-type=<type>]
+go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>] [-accelerator-type=<type>] [-allocation-mode=<mode>]
+```
+
+Run `go test ./test -args -help` for details about each flag.
+
+The allocation-mode detection and pod-construction logic also has hermetic unit tests (fake clientset, no cluster needed):
+
+```bash
+go test -v ./test -run 'Test(DetectAllocationMode|ExtendedResourceGuardFailsClosed|LookupAcceleratorConfig|BuildTestPod|PodGeneratedClaims|DeleteAndAwaitRelease)$'
 ```
 
 ### Test Cases Covered
