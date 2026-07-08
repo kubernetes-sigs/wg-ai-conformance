@@ -23,9 +23,10 @@ ARTIFACTS="${ARTIFACTS:-${REPO_ROOT}/_artifacts}"
 mkdir -p "${ARTIFACTS}"
 
 # Configuration
-GCE_ZONE="${GCE_ZONE:-us-central1-b}"
-GCE_MACHINE_TYPE="${GCE_MACHINE_TYPE:-g2-standard-4}"
-GCE_ACCELERATOR="${GCE_ACCELERATOR:-type=nvidia-l4,count=1}"
+DEFAULT_GCE_ZONES="us-central1-b us-central1-c us-central1-a us-east1-c us-west1-b"
+GCE_ZONES="${GCE_ZONE:-$DEFAULT_GCE_ZONES}"
+GCE_MACHINE_TYPE="${GCE_MACHINE_TYPE:-n1-standard-4}"
+GCE_ACCELERATOR="${GCE_ACCELERATOR:-type=nvidia-tesla-t4,count=1}"
 GCE_IMAGE_FAMILY="${GCE_IMAGE_FAMILY:-common-cu129-ubuntu-2404-nvidia-580}"
 GCE_IMAGE_PROJECT="${GCE_IMAGE_PROJECT:-deeplearning-platform-release}"
 K8S_VERSION="${K8S_VERSION:-v1.35.0}"
@@ -48,17 +49,25 @@ if [[ -n "${BOSKOS_HOST:-}" && "${RUN_IN_PROW:-false}" == "true" ]]; then
         go install sigs.k8s.io/boskos/cmd/boskosctl@latest
     fi
 
-    GCP_PROJECT=$(boskosctl acquire --server "${BOSKOS_HOST}" --type "${BOSKOS_RESOURCE_TYPE}" --owner "${JOB_NAME}")
+    BOSKOS_RESOURCE_JSON=$(boskosctl \
+        --server-url "${BOSKOS_HOST}" \
+        --owner-name "${JOB_NAME}" \
+        acquire \
+        --type "${BOSKOS_RESOURCE_TYPE}" \
+        --state free \
+        --target-state busy \
+        --timeout 30m)
+    GCP_PROJECT=$(echo "${BOSKOS_RESOURCE_JSON}" | jq -r .name)
     export GCP_PROJECT
     echo "Acquired GCP Project: ${GCP_PROJECT}"
 
     # Start Boskos heartbeat in background
-    (
-        while true; do
-            sleep 60
-            boskosctl heartbeat --server "${BOSKOS_HOST}" --name "${GCP_PROJECT}" --owner "${JOB_NAME}" || break
-        done
-    ) &
+    boskosctl \
+        --server-url "${BOSKOS_HOST}" \
+        --owner-name "${JOB_NAME}" \
+        heartbeat \
+        --resource "${BOSKOS_RESOURCE_JSON}" \
+        --period 30s &
     HEARTBEAT_PID=$!
 else
     echo "=== Running in Local/Dev Mode ==="
@@ -77,6 +86,7 @@ cleanup() {
 
     if [[ -n "${HEARTBEAT_PID:-}" ]]; then
         kill "${HEARTBEAT_PID}" &>/dev/null || true
+        wait "${HEARTBEAT_PID}" &>/dev/null || true
     fi
 
     if [[ -n "${GCP_PROJECT:-}" ]]; then
@@ -88,24 +98,45 @@ cleanup() {
 
         if [[ -n "${BOSKOS_HOST:-}" && "${RUN_IN_PROW:-false}" == "true" ]]; then
             echo "Releasing Boskos GCP project ${GCP_PROJECT}..."
-            boskosctl release --server "${BOSKOS_HOST}" --name "${GCP_PROJECT}" --owner "${JOB_NAME}" || true
+            boskosctl \
+                --server-url "${BOSKOS_HOST}" \
+                --owner-name "${JOB_NAME}" \
+                release \
+                --name "${GCP_PROJECT}" \
+                --target-state dirty || true
         fi
     fi
 }
 trap cleanup EXIT
 
 echo "================================================================"
-echo "1. Creating GCE GPU Instance (${VM_NAME}) in ${GCE_ZONE}"
+echo "1. Creating GCE GPU Instance (${VM_NAME})"
 echo "================================================================"
-gcloud compute instances create "${VM_NAME}" \
-    --project="${GCP_PROJECT}" \
-    --zone="${GCE_ZONE}" \
-    --machine-type="${GCE_MACHINE_TYPE}" \
-    --accelerator="${GCE_ACCELERATOR}" \
-    --image-family="${GCE_IMAGE_FAMILY}" \
-    --image-project="${GCE_IMAGE_PROJECT}" \
-    --boot-disk-size=100GB \
-    --maintenance-policy=TERMINATE
+VM_CREATED=false
+for zone in ${GCE_ZONES}; do
+    echo "Attempting to create VM in zone: ${zone}..."
+    if gcloud compute instances create "${VM_NAME}" \
+        --project="${GCP_PROJECT}" \
+        --zone="${zone}" \
+        --machine-type="${GCE_MACHINE_TYPE}" \
+        --accelerator="${GCE_ACCELERATOR}" \
+        --image-family="${GCE_IMAGE_FAMILY}" \
+        --image-project="${GCE_IMAGE_PROJECT}" \
+        --boot-disk-size=100GB \
+        --maintenance-policy=TERMINATE; then
+        GCE_ZONE="${zone}"
+        VM_CREATED=true
+        echo "Successfully created GCE VM (${VM_NAME}) in zone ${GCE_ZONE}"
+        break
+    else
+        echo "WARNING: Failed to create VM in zone ${zone}, trying next zone..."
+    fi
+done
+
+if [[ "${VM_CREATED}" != "true" ]]; then
+    echo "Error: Failed to create GCE VM in any candidate zone (${GCE_ZONES})."
+    exit 1
+fi
 
 echo "Waiting for SSH to be available on ${VM_NAME}..."
 for i in {1..30}; do
@@ -123,26 +154,102 @@ echo "================================================================"
 gcloud compute scp --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --recurse "${REPO_ROOT}" "${VM_NAME}:~/ai-conformance"
 
 # Run setup & nvkind cluster creation on VM
-gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<'REMOTE_SCRIPT'
+gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<REMOTE_SCRIPT
 set -euo pipefail
 
 echo "Installing Docker & NVIDIA Container Toolkit..."
-sudo apt-get update && sudo apt-get install -y docker.io helm
-sudo usermod -aG docker $USER
+sudo apt-get update -qq
+sudo apt-get install -y -qq ca-certificates curl gnupg make build-essential git jq docker.io
 
-echo "Installing Go & nvkind..."
+if ! command -v nvidia-ctk >/dev/null 2>&1; then
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey |
+    sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list |
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' |
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq nvidia-container-toolkit
+fi
+
+sudo usermod -aG docker \$USER
+
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled
+sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
+sudo systemctl restart docker
+
+echo "Verifying Docker GPU access..."
+sudo docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all ubuntu:22.04 nvidia-smi -L || true
+
+echo "Installing Helm..."
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+echo "Installing kubectl..."
+curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+
+echo "Installing Go, kind & nvkind..."
 wget -q https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go
 sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
-export PATH="/usr/local/go/bin:${PATH}"
+export PATH="/usr/local/go/bin:\${PATH}"
 
 go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
 go install sigs.k8s.io/kind@latest
-export PATH="${HOME}/go/bin:${PATH}"
+export PATH="\${HOME}/go/bin:\${PATH}"
 
-echo "Creating nvkind cluster..."
-nvkind cluster create --name ai-conformance-cluster --k8s-version v1.35.0
+cat <<'EOF' > /tmp/nvkind-config.yaml.tmpl
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+featureGates:
+  DynamicResourceAllocation: true
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri"]
+    enable_cdi = true
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        feature-gates: "DynamicResourceAllocation=true"
+    controllerManager:
+      extraArgs:
+        feature-gates: "DynamicResourceAllocation=true"
+    scheduler:
+      extraArgs:
+        feature-gates: "DynamicResourceAllocation=true"
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        feature-gates: "DynamicResourceAllocation=true"
+- role: worker
+  kubeadmConfigPatches:
+  - |
+    kind: JoinConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        feature-gates: "DynamicResourceAllocation=true"
+  {{- range \$gpu := until numGPUs }}
+  extraMounts:
+  - hostPath: /dev/null
+    containerPath: /var/run/nvidia-container-devices/{{ \$gpu }}
+  {{- end }}
+EOF
 
-echo "Cluster nodes & GPUs:"
+echo "Creating nvkind cluster (DRA enabled)..."
+sudo -E env PATH="\${PATH}" nvkind cluster create \
+    --name ai-conformance-cluster \
+    --image "kindest/node:${K8S_VERSION}" \
+    --config-template /tmp/nvkind-config.yaml.tmpl
+
+kubectl wait --for=condition=Ready nodes --all --timeout=300s
+kubectl label node --all nvidia.com/gpu.present=true feature.node.kubernetes.io/pci-10de.present=true --overwrite
+
+echo "nvkind cluster GPUs:"
+sudo -E env PATH="\${PATH}" nvkind cluster print-gpus --name ai-conformance-cluster || true
 kubectl get nodes -o wide
 REMOTE_SCRIPT
 
@@ -157,15 +264,21 @@ echo "Installing cert-manager..."
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
 kubectl rollout status deployment -n cert-manager cert-manager --timeout=5m
 
-echo "Installing NVIDIA GPU Operator / DRA driver..."
+echo "Labeling GPU nodes for DRA driver..."
+kubectl label node --all nvidia.com/gpu.present=true feature.node.kubernetes.io/pci-10de.present=true --overwrite
+
+echo "Installing NVIDIA DRA Driver..."
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 helm repo update
-helm upgrade -i gpu-operator nvidia/gpu-operator \
-    --namespace gpu-operator \
+helm upgrade -i nvidia-dra-driver nvidia/nvidia-dra-driver-gpu \
+    --namespace nvidia-dra-driver \
     --create-namespace \
-    --set driver.enabled=false \
-    --set toolkit.enabled=true \
+    --set gpuResourcesEnabledOverride=true \
     --wait --timeout 10m
+
+echo "Checking ResourceSlices & DeviceClasses:"
+kubectl get deviceclasses || true
+kubectl get resourceslices -o wide || true
 REMOTE_STACK
 
 echo "================================================================"
