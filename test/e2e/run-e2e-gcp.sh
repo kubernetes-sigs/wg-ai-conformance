@@ -294,9 +294,9 @@ REMOTE_STACK
 echo "================================================================"
 echo "4. Executing AI Conformance Test Suite (test/)"
 echo "================================================================"
-gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<'REMOTE_TEST'
+gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<REMOTE_TEST
 set -euo pipefail
-export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
+export PATH="/usr/local/go/bin:\${HOME}/go/bin:\${PATH}"
 
 cd ~/ai-conformance
 mkdir -p _artifacts
