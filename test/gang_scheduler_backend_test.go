@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"os/exec"
+
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -53,8 +57,34 @@ type kueueBackend struct {
 	lqName      string
 }
 
-func (k *kueueBackend) setup(ctx context.Context, t *testing.T, _ kubernetes.Interface, restConfig *rest.Config, namespace string) {
-	var err error
+func (k *kueueBackend) setup(ctx context.Context, t *testing.T, clientset kubernetes.Interface, restConfig *rest.Config, namespace string) {
+	t.Logf("Installing Kueue...")
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f", "https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to install Kueue: %v\nOutput: %s", err, string(out))
+	}
+
+	t.Logf("Waiting for Kueue controller manager to be ready...")
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		deployment, err := clientset.AppsV1().Deployments("kueue-system").Get(ctx, "kueue-controller-manager", metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		for _, cond := range deployment.Status.Conditions {
+			if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Kueue controller manager did not become ready: %v", err)
+	}
+	t.Logf("Kueue installed successfully.")
+
 	k.kueueClient, err = kueueclientset.NewForConfig(restConfig)
 	if err != nil {
 		t.Fatalf("Error creating Kueue client: %v", err)
