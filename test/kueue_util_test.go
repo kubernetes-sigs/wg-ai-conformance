@@ -112,3 +112,23 @@ func TestBuildKueueObjects(t *testing.T) {
 		}
 	})
 }
+
+func TestLookupGangScheduler(t *testing.T) {
+	t.Run("valid backend returns no error", func(t *testing.T) {
+		backend, err := lookupGangScheduler("kueue")
+		if err != nil {
+			t.Fatalf("unexpected error for 'kueue': %v", err)
+		}
+		if backend == nil {
+			t.Fatal("expected non-nil backend for 'kueue'")
+		}
+	})
+
+	t.Run("unknown backend returns error", func(t *testing.T) {
+		_, err := lookupGangScheduler("unknown-scheduler")
+		if err == nil {
+			t.Fatal("expected error for unknown scheduler, got nil")
+		}
+	})
+}
+

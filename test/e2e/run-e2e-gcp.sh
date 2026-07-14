@@ -31,6 +31,7 @@ GCE_IMAGE_FAMILY="${GCE_IMAGE_FAMILY:-common-cu129-ubuntu-2404-nvidia-580}"
 GCE_IMAGE_PROJECT="${GCE_IMAGE_PROJECT:-deeplearning-platform-release}"
 K8S_VERSION="${K8S_VERSION:-v1.35.0}"
 GPU_OPERATOR_VERSION="${GPU_OPERATOR_VERSION:-v26.3.1}"
+GANG_SCHEDULER="${GANG_SCHEDULER:-kueue}"
 BUILD_ID="${BUILD_ID:-$(date +%s)}"
 VM_NAME="ai-conformance-e2e-${BUILD_ID}"
 
@@ -280,10 +281,14 @@ echo "Checking ResourceSlices & DeviceClasses:"
 kubectl get deviceclasses || true
 kubectl get resourceslices -o wide || true
 
+if [[ "${GANG_SCHEDULER}" == "kueue" ]]; then
 echo "Installing Kueue..."
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml
 kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
 echo "Kueue installed successfully."
+else
+echo "Skipping Kueue installation (gang-scheduler=${GANG_SCHEDULER})."
+fi
 REMOTE_STACK
 
 echo "================================================================"
@@ -300,6 +305,7 @@ echo "Running go test ./test/..."
 go test -v ./test/... \
     -accelerator-type=nvidia \
     -allocation-mode=auto \
+    -gang-scheduler=${GANG_SCHEDULER} \
     -json | tee _artifacts/results.json
 REMOTE_TEST
 

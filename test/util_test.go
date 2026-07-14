@@ -55,6 +55,7 @@ var (
 	kubeconfig         *string
 	acceleratorType    *string
 	allocationMode     *string
+	gangScheduler      *string
 	acceleratorConfigs = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
@@ -74,6 +75,8 @@ func init() {
 	acceleratorType = flag.String("accelerator-type", "nvidia", "The type of accelerator to test. Supported types: 'nvidia' (default). Support for other types is being added.")
 	allocationMode = flag.String("allocation-mode", allocationModeAuto,
 		"How test pods request accelerators: 'dra' (ResourceClaims), 'device-plugin' (extended resources such as nvidia.com/gpu), or 'auto' (default; prefer DRA when usable, otherwise fall back to the device plugin).")
+	gangScheduler = flag.String("gang-scheduler", "kueue",
+		"The gang scheduling solution to test. Supported: 'kueue' (default). The test verifies all-or-nothing scheduling behavior using the selected backend.")
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,
