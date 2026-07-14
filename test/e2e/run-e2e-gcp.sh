@@ -254,7 +254,7 @@ kubectl get nodes -o wide
 REMOTE_SCRIPT
 
 echo "================================================================"
-echo "3. Deploying Cluster Prerequisites (NVIDIA GPU Operator / DRA Driver)"
+echo "3. Deploying Cluster Prerequisites (NVIDIA DRA Driver & Kueue)"
 echo "================================================================"
 gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<REMOTE_STACK
 set -euo pipefail
@@ -279,6 +279,11 @@ helm upgrade -i nvidia-dra-driver nvidia/nvidia-dra-driver-gpu \
 echo "Checking ResourceSlices & DeviceClasses:"
 kubectl get deviceclasses || true
 kubectl get resourceslices -o wide || true
+
+echo "Installing Kueue..."
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml
+kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
+echo "Kueue installed successfully."
 REMOTE_STACK
 
 echo "================================================================"
