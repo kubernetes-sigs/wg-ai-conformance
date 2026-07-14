@@ -9,8 +9,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -32,6 +34,50 @@ func claim(ns, name string, allocated bool) *resourcev1.ResourceClaim {
 		rc.Status.Allocation = &resourcev1.AllocationResult{}
 	}
 	return rc
+}
+
+func TestWaitForPodsRunning(t *testing.T) {
+	ns := "ns"
+
+	t.Run("returns all running pods", func(t *testing.T) {
+		client := fake.NewClientset(
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: ns}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: ns}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+		)
+		pods, err := waitForPodsRunning(context.Background(), client, ns, []string{"a", "b"}, time.Second)
+		if err != nil {
+			t.Fatalf("waitForPodsRunning unexpected error: %v", err)
+		}
+		if len(pods) != 2 || pods["a"] == nil || pods["b"] == nil {
+			t.Fatalf("waitForPodsRunning returned %v, want Pods a and b", pods)
+		}
+	})
+
+	t.Run("times out while a pod is pending", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		client := fake.NewClientset(
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: ns}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: ns}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
+		)
+		if _, err := waitForPodsRunning(ctx, client, ns, []string{"a", "b"}, time.Second); err == nil {
+			t.Fatal("waitForPodsRunning expected timeout")
+		}
+	})
+
+	t.Run("fails fast on a permanent API error", func(t *testing.T) {
+		client := fake.NewClientset()
+		client.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "a", errors.New("denied"))
+		})
+		start := time.Now()
+		if _, err := waitForPodsRunning(context.Background(), client, ns, []string{"a"}, time.Second); err == nil {
+			t.Fatal("waitForPodsRunning expected permanent API error")
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("permanent API error took %s to return", elapsed)
+		}
+	})
 }
 
 func TestPodGeneratedClaims(t *testing.T) {
@@ -183,4 +229,46 @@ func TestDeleteAndAwaitRelease(t *testing.T) {
 			t.Fatalf("expected delete error to propagate, got %v", err)
 		}
 	})
+
+	t.Run("retries transient pod delete API errors", func(t *testing.T) {
+		client := fake.NewClientset(podWithClaimStatus(ns, "p", "c"))
+		attempts := 0
+		client.PrependReactor("delete", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+			attempts++
+			if attempts == 1 {
+				return true, nil, apierrors.NewTooManyRequests("busy", 0)
+			}
+			return false, nil, nil
+		})
+		if err := deleteAndAwaitRelease(context.Background(), client, ns, "p", nil); err != nil {
+			t.Fatalf("deleteAndAwaitRelease unexpected error: %v", err)
+		}
+		if attempts != 2 {
+			t.Fatalf("delete attempts = %d, want 2", attempts)
+		}
+	})
+}
+
+func TestIsRetryableAPIError(t *testing.T) {
+	if !isRetryableAPIError(apierrors.NewTooManyRequests("busy", 0)) {
+		t.Fatal("TooManyRequests should be retryable")
+	}
+	if isRetryableAPIError(apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "p", errors.New("denied"))) {
+		t.Fatal("Forbidden should not be retryable")
+	}
+}
+
+func TestDeletePodAndWait(t *testing.T) {
+	client := fake.NewClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns"}})
+	getAttempts := 0
+	client.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		getAttempts++
+		if getAttempts == 1 {
+			return true, nil, errors.New("temporary read failure")
+		}
+		return false, nil, nil
+	})
+	if err := deletePodAndWait(context.Background(), client, "ns", "p", nil); err != nil {
+		t.Fatalf("deletePodAndWait unexpected error after confirmed release: %v", err)
+	}
 }

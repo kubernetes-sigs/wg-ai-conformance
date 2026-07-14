@@ -39,6 +39,8 @@ The test verifies that a cluster autoscaler running on the platform scales node 
 
 4. **Cleanup**: Delete remaining test resources and restore the node pool to its original configuration.
 
+This is implemented by `TestAcceleratorClusterAutoscaling` in the AI conformance test suite (see [test/cluster_autoscaling_test.go](../../test/cluster_autoscaling_test.go)). The test uses a provider-supplied node-pool label and required Pod anti-affinity to place one accelerator-requesting Pod on each baseline node. It validates device-plugin capacity directly and uses isolated baseline allocations plus a Pending trigger to validate effective DRA capacity. The pool must have no competing workloads or accelerator demand. The additional trigger Pod carries neither the baseline run label nor anti-affinity, so exhausted accelerator capacity is its only expected unsatisfied target-pool constraint. The test verifies that the selected pool gains Ready capacity, the Pod runs on a Node UID outside the stable baseline, and the pool returns to the original Ready, schedulable baseline after the Pod is deleted. A retained NotReady Node object does not fail scale-down because Kubernetes does not provide a portable cloud node-group size API. The test observes a preconfigured pool and does not modify provider node-pool settings.
+
 ## Implementation History
 
 2026-03-12: KAR created
