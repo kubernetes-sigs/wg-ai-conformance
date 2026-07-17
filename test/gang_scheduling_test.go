@@ -76,7 +76,7 @@ func TestGangScheduling(t *testing.T) {
 
 	t.Run("PositiveGangScheduling", func(t *testing.T) {
 		jobName := "pos-job"
-		job := buildGenericGangSchedulingJob(namespace, jobName, 2, "1", "1Gi")
+		job := buildGenericGangSchedulingJob(namespace, jobName, 2, "100m", "128Mi")
 
 		t.Cleanup(func() {
 			deletePolicy := metav1.DeletePropagationBackground
@@ -93,7 +93,7 @@ func TestGangScheduling(t *testing.T) {
 
 	t.Run("NegativeGangScheduling", func(t *testing.T) {
 		jobName := "neg-job"
-		job := buildGenericGangSchedulingJob(namespace, jobName, 1000, "1", "1Gi")
+		job := buildGenericGangSchedulingJob(namespace, jobName, 1000, "100m", "128Mi")
 
 		t.Cleanup(func() {
 			deletePolicy := metav1.DeletePropagationBackground

@@ -307,9 +307,9 @@ spec:
     - name: e2e-flavor
       resources:
       - name: "cpu"
-        nominalQuota: 1
+        nominalQuota: 10
       - name: "memory"
-        nominalQuota: 1Gi
+        nominalQuota: 10Gi
 ---
 apiVersion: v1
 kind: Namespace
