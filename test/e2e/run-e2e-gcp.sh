@@ -287,14 +287,15 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases
 echo "Waiting for Kueue controller manager to be ready..."
 kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
 
-echo "Creating Kueue resources..."
-cat <<EOF | kubectl apply -f -
-apiVersion: kueue.x-k8s.io/v1beta1
+echo "Creating Kueue resources (with retries for webhook readiness)..."
+for i in {1..10}; do
+  cat <<EOF | kubectl apply -f - && break
+apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
 metadata:
   name: e2e-flavor
 ---
-apiVersion: kueue.x-k8s.io/v1beta1
+apiVersion: kueue.x-k8s.io/v1beta2
 kind: ClusterQueue
 metadata:
   name: e2e-cq
@@ -315,7 +316,7 @@ kind: Namespace
 metadata:
   name: ai-conformance-gang-scheduling
 ---
-apiVersion: kueue.x-k8s.io/v1beta1
+apiVersion: kueue.x-k8s.io/v1beta2
 kind: LocalQueue
 metadata:
   name: e2e-lq
@@ -323,6 +324,9 @@ metadata:
 spec:
   clusterQueue: e2e-cq
 EOF
+  echo "Webhook might not be ready yet, retrying in 5 seconds... ($i/10)"
+  sleep 5
+done
 
 echo "Waiting for ClusterQueue to be active..."
 kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
