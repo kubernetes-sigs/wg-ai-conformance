@@ -281,6 +281,51 @@ echo "Checking ResourceSlices & DeviceClasses:"
 kubectl get deviceclasses || true
 kubectl get resourceslices -o wide || true
 
+echo "Installing Kueue..."
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml
+
+echo "Waiting for Kueue controller manager to be ready..."
+kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
+
+echo "Creating Kueue resources..."
+cat <<EOF | kubectl apply -f -
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: e2e-flavor
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: e2e-cq
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources: ["cpu", "memory"]
+    flavors:
+    - name: e2e-flavor
+      resources:
+      - name: "cpu"
+        nominalQuota: 1
+      - name: "memory"
+        nominalQuota: 1Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-conformance-gang-scheduling
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: e2e-lq
+  namespace: ai-conformance-gang-scheduling
+spec:
+  clusterQueue: e2e-cq
+EOF
+
+echo "Waiting for ClusterQueue to be active..."
+kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
 
 REMOTE_STACK
 
@@ -298,7 +343,8 @@ echo "Running go test ./test/..."
 go test -v ./test/... \
     -accelerator-type=nvidia \
     -allocation-mode=auto \
-    -gang-scheduler=${GANG_SCHEDULER} \
+    -gang-scheduler-namespace=ai-conformance-gang-scheduling \
+    -gang-job-labels="kueue.x-k8s.io/queue-name=e2e-lq" \
     -json | tee _artifacts/results.json
 REMOTE_TEST
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,7 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
-	kueuev1beta1 "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+
 )
 
 type AcceleratorConfig struct {
@@ -54,9 +54,11 @@ const (
 var (
 	kubeconfig         *string
 	acceleratorType    *string
-	allocationMode     *string
-	gangScheduler      *string
-	acceleratorConfigs = map[string]AcceleratorConfig{
+	allocationMode             *string
+	gangSchedulerNamespace     *string
+	gangJobLabels              *string
+	gangSchedulerSuspend       *bool
+	acceleratorConfigs         = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
 			DRADriver:        "gpu.nvidia.com",
@@ -75,8 +77,12 @@ func init() {
 	acceleratorType = flag.String("accelerator-type", "nvidia", "The type of accelerator to test. Supported types: 'nvidia' (default). Support for other types is being added.")
 	allocationMode = flag.String("allocation-mode", allocationModeAuto,
 		"How test pods request accelerators: 'dra' (ResourceClaims), 'device-plugin' (extended resources such as nvidia.com/gpu), or 'auto' (default; prefer DRA when usable, otherwise fall back to the device plugin).")
-	gangScheduler = flag.String("gang-scheduler", "kueue",
-		"The gang scheduling solution to test. Supported: 'kueue' (default). The test verifies all-or-nothing scheduling behavior using the selected backend.")
+	gangSchedulerNamespace = flag.String("gang-scheduler-namespace", "",
+		"Namespace pre-configured with gang scheduling resources (e.g., LocalQueue). If empty, the test will generate a random namespace.")
+	gangJobLabels = flag.String("gang-job-labels", "",
+		"Comma-separated key=value labels to apply to the generic gang scheduling Job (e.g. kueue.x-k8s.io/queue-name=e2e-lq).")
+	gangSchedulerSuspend = flag.Bool("gang-scheduler-suspend", true,
+		"Whether to set the suspend field to true on the generic gang scheduling Job.")
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,
@@ -748,90 +754,3 @@ func randomNamespaceName(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, rand.String(5))
 }
 
-func buildResourceFlavor(name string) *kueuev1beta1.ResourceFlavor {
-	return &kueuev1beta1.ResourceFlavor{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-	}
-}
-
-func buildClusterQueue(name, flavorName string, cpuQuota, memQuota string) *kueuev1beta1.ClusterQueue {
-	return &kueuev1beta1.ClusterQueue{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-		Spec: kueuev1beta1.ClusterQueueSpec{
-			NamespaceSelector: &metav1.LabelSelector{},
-			ResourceGroups: []kueuev1beta1.ResourceGroup{
-				{
-					CoveredResources: []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory},
-					Flavors: []kueuev1beta1.FlavorQuotas{
-						{
-							Name: kueuev1beta1.ResourceFlavorReference(flavorName),
-							Resources: []kueuev1beta1.ResourceQuota{
-								{
-									Name:         corev1.ResourceCPU,
-									NominalQuota: resource.MustParse(cpuQuota),
-								},
-								{
-									Name:         corev1.ResourceMemory,
-									NominalQuota: resource.MustParse(memQuota),
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func buildLocalQueue(ns, name, clusterQueueName string) *kueuev1beta1.LocalQueue {
-	return &kueuev1beta1.LocalQueue{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
-		},
-		Spec: kueuev1beta1.LocalQueueSpec{
-			ClusterQueue: kueuev1beta1.ClusterQueueReference(clusterQueueName),
-		},
-	}
-}
-
-func buildGangSchedulingJob(ns, name, queueName string, parallelism int, cpuReq, memReq string) *batchv1.Job {
-	parallelism32 := int32(parallelism)
-	suspend := true
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
-			Labels: map[string]string{
-				"kueue.x-k8s.io/queue-name": queueName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			Parallelism: &parallelism32,
-			Completions: &parallelism32,
-			Suspend:     &suspend,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					Containers: []corev1.Container{
-						{
-							Name:  "test-container",
-							Image: "busybox:latest",
-							Command: []string{"/bin/sh", "-c", "sleep 5 && exit 0"},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse(cpuReq),
-									corev1.ResourceMemory: resource.MustParse(memReq),
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
