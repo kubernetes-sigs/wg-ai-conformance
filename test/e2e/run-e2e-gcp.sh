@@ -189,9 +189,9 @@ curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/\$(curl -L -s https://dl.k
 sudo install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
 
 echo "Installing Go, kind & nvkind..."
-wget -q https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+wget -q https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
 sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.26.0.linux-amd64.tar.gz
 export PATH="/usr/local/go/bin:\${PATH}"
 
 go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
