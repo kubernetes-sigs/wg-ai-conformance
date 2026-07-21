@@ -57,7 +57,6 @@ var (
 	allocationMode             *string
 	gangSchedulerNamespace     *string
 	gangJobLabels              *string
-	gangSchedulerSuspend       *bool
 	acceleratorConfigs         = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
@@ -81,8 +80,6 @@ func init() {
 		"Namespace pre-configured with gang scheduling resources (e.g., LocalQueue). If empty, the test will generate a random namespace.")
 	gangJobLabels = flag.String("gang-job-labels", "",
 		"Comma-separated key=value labels to apply to the generic gang scheduling Job (e.g. kueue.x-k8s.io/queue-name=e2e-lq).")
-	gangSchedulerSuspend = flag.Bool("gang-scheduler-suspend", true,
-		"Whether to set the suspend field to true on the generic gang scheduling Job.")
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,

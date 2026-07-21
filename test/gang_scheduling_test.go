@@ -2,7 +2,9 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +123,6 @@ func buildGenericGangSchedulingJob(ns, name string, parallelism int, cpuReq, mem
 		Spec: batchv1.JobSpec{
 			Parallelism: &parallelism32,
 			Completions: &parallelism32,
-			Suspend:     gangSchedulerSuspend,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"job-name": name},
@@ -181,22 +182,47 @@ func verifyJobComplete(ctx context.Context, t *testing.T, clientset kubernetes.I
 }
 
 func verifyJobSuspendedOrPending(ctx context.Context, t *testing.T, clientset kubernetes.Interface, namespace, jobName string) {
-	t.Logf("Verifying negative job %s remains suspended or pending without partial pods...", jobName)
+	verificationWindow := 10 * time.Second
+	pollInterval := 1 * time.Second
+	t.Logf("Verifying negative job %s remains suspended or pending without partial pods for %v...", jobName, verificationWindow)
 
-	time.Sleep(10 * time.Second)
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, verificationWindow, true, func(ctx context.Context) (bool, error) {
+		job, err := clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
 
-	job, err := clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+		if job.Spec.Suspend != nil && *job.Spec.Suspend {
+			// Job is suspended, which is valid for gang scheduling (e.g., Kueue)
+			// Continue polling to ensure it remains suspended
+			return false, nil
+		}
+
+		// If not suspended (e.g., Volcano), verify no pods are running or bound to a Node
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "job-name=" + jobName,
+		})
+		if err != nil {
+			return false, err
+		}
+
+		for _, pod := range pods.Items {
+			if pod.Status.Phase == corev1.PodRunning || pod.Spec.NodeName != "" {
+				return false, fmt.Errorf("negative job %s has a running or bound pod %s (partial scheduling)", jobName, pod.Name)
+			}
+		}
+
+		return false, nil
+	})
+
 	if err != nil {
-		t.Fatalf("Failed to get negative job: %v", err)
-	}
-
-
-	if job.Spec.Suspend != nil && *job.Spec.Suspend {
-		t.Logf("Negative job %s is suspended as expected.", jobName)
-	} else if job.Status.Active > 0 {
-		t.Fatalf("Negative job %s should not have any active pods, but found %d active pods (partial scheduling)", jobName, job.Status.Active)
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "context deadline exceeded") {
+			t.Logf("Negative job %s successfully remained suspended or pending with 0 bound pods throughout the verification window.", jobName)
+		} else {
+			t.Fatalf("Failed to verify negative job: %v", err)
+		}
 	} else {
-		t.Logf("Negative job %s has 0 active pods as expected.", jobName)
+		t.Fatalf("Unexpected success from polling loop")
 	}
 }
 

@@ -281,15 +281,16 @@ echo "Checking ResourceSlices & DeviceClasses:"
 kubectl get deviceclasses || true
 kubectl get resourceslices -o wide || true
 
-echo "Installing Kueue..."
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml
+if [ "${GANG_SCHEDULER}" = "kueue" ]; then
+  echo "Installing Kueue..."
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml
 
-echo "Waiting for Kueue controller manager to be ready..."
-kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
+  echo "Waiting for Kueue controller manager to be ready..."
+  kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
 
-echo "Creating Kueue resources (with retries for webhook readiness)..."
-for i in {1..10}; do
-  cat <<EOF | kubectl apply -f - && break
+  echo "Creating Kueue resources (with retries for webhook readiness)..."
+  for i in {1..10}; do
+    cat <<EOF | kubectl apply -f - && break
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
 metadata:
@@ -324,12 +325,13 @@ metadata:
 spec:
   clusterQueue: e2e-cq
 EOF
-  echo "Webhook might not be ready yet, retrying in 5 seconds... ($i/10)"
-  sleep 5
-done
+    echo "Webhook might not be ready yet, retrying in 5 seconds... ($i/10)"
+    sleep 5
+  done
 
-echo "Waiting for ClusterQueue to be active..."
-kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
+  echo "Waiting for ClusterQueue to be active..."
+  kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
+fi
 
 REMOTE_STACK
 
