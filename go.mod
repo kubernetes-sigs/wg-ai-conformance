@@ -1,12 +1,12 @@
 module github.com/kubernetes-sigs/ai-conformance
 
-go 1.26.0
+go 1.25.0
 
 require (
-	k8s.io/api v0.36.1
-	k8s.io/apimachinery v0.36.1
-	k8s.io/client-go v0.36.1
-	k8s.io/component-helpers v0.36.1
+	k8s.io/api v0.35.1
+	k8s.io/apimachinery v0.35.1
+	k8s.io/client-go v0.35.1
+	k8s.io/component-helpers v0.35.1
 )
 
 require (
