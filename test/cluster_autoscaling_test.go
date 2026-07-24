@@ -33,7 +33,6 @@ type nodeReference struct {
 
 var (
 	autoscalerNodePoolLabel    *string
-	autoscalerAllocationMode   *string
 	autoscalerPendingTimeout   *time.Duration
 	autoscalerScaleUpTimeout   *time.Duration
 	autoscalerScaleDownTimeout *time.Duration
@@ -43,8 +42,6 @@ var (
 func init() {
 	autoscalerNodePoolLabel = flag.String("autoscaler-node-pool-label", "",
 		"Node label identifying the accelerator pool to test, in key=value form. The test is skipped when unset.")
-	autoscalerAllocationMode = flag.String("autoscaler-allocation-mode", allocationModeDevicePlugin,
-		"How autoscaling test pods request accelerators: 'device-plugin' (default) or 'dra'.")
 	autoscalerPendingTimeout = flag.Duration("autoscaler-pending-timeout", 2*time.Minute,
 		"How long to wait for the scale-up trigger Pod to become Unschedulable.")
 	autoscalerScaleUpTimeout = flag.Duration("autoscaler-scale-up-timeout", 20*time.Minute,
@@ -71,9 +68,6 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invalid -autoscaler-node-pool-label: %v", err)
 	}
-	if err := validateAutoscalerAllocationMode(*autoscalerAllocationMode); err != nil {
-		t.Fatalf("Invalid -autoscaler-allocation-mode: %v", err)
-	}
 	if err := validateAutoscalerDurations(
 		*autoscalerPendingTimeout,
 		*autoscalerScaleUpTimeout,
@@ -89,6 +83,11 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 
 	ctx := context.Background()
 	clientset := getClientset(t)
+	mode, _, err := detectAllocationMode(ctx, clientset, *allocationMode, cfg, t.Logf)
+	if err != nil {
+		t.Fatalf("ENVIRONMENT ERROR: Failed to resolve allocation mode: %v", err)
+	}
+	t.Logf("Accelerator autoscaling test running with allocation mode: %s", mode)
 
 	// Capture the stable size and accelerator capacity of the target node pool.
 	initialNodes, err := readyPoolNodes(ctx, clientset, poolKey, poolValue)
@@ -106,10 +105,10 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	baselineCount := len(baselineNodes)
 	t.Logf("Captured accelerator pool baseline: %d Ready, schedulable nodes matching %s=%s", baselineCount, poolKey, poolValue)
 
-	if err := verifyAutoscalerPoolCapacity(ctx, clientset, baselineNodes, *autoscalerAllocationMode, cfg); err != nil {
+	if err := verifyAutoscalerPoolCapacity(ctx, clientset, baselineNodes, mode, cfg); err != nil {
 		t.Fatalf("ENVIRONMENT ERROR: %v", err)
 	}
-	if err := verifyPoolIsIdle(ctx, clientset, "", baselineNodes, poolKey, poolValue, *autoscalerAllocationMode, cfg); err != nil {
+	if err := verifyPoolIsIdle(ctx, clientset, "", baselineNodes, poolKey, poolValue, mode, cfg); err != nil {
 		t.Fatalf("ENVIRONMENT ERROR: %v", err)
 	}
 
@@ -119,7 +118,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 			t.Errorf("CLEANUP FAILURE: %v. Please ensure this namespace is terminated manually to avoid resource leaks.", err)
 		}
 	})
-	setupTestEnvironment(ctx, t, clientset, namespace, *autoscalerAllocationMode, cfg)
+	setupTestEnvironment(ctx, t, clientset, namespace, mode, cfg)
 
 	// Keep one accelerator Pod running on every baseline node.
 	runLabelValue := randomNamespaceName("run")
@@ -141,7 +140,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	baselinePodNames := make([]string, 0, baselineCount)
 	for i := 0; i < baselineCount; i++ {
 		name := fmt.Sprintf("autoscaler-baseline-%d", i)
-		pod, err := buildAutoscalingPod(namespace, name, runLabelValue, poolKey, poolValue, *autoscalerAllocationMode, cfg, true)
+		pod, err := buildAutoscalingPod(namespace, name, runLabelValue, poolKey, poolValue, mode, cfg, true)
 		if err != nil {
 			t.Fatalf("Failed to build baseline Pod %s: %v", name, err)
 		}
@@ -167,14 +166,14 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	if !sameNodeIdentitySet(currentBaseline, baselineNodes) {
 		t.Fatalf("ENVIRONMENT ERROR: Accelerator pool membership changed while establishing the baseline")
 	}
-	if err := verifyPoolIsIdle(ctx, clientset, namespace, currentBaseline, poolKey, poolValue, *autoscalerAllocationMode, cfg); err != nil {
+	if err := verifyPoolIsIdle(ctx, clientset, namespace, currentBaseline, poolKey, poolValue, mode, cfg); err != nil {
 		t.Fatalf("ENVIRONMENT ERROR: %v", err)
 	}
 	t.Logf("Baseline established: %d accelerator Pods occupy %d distinct pool nodes", baselineCount, baselineCount)
 
 	// Create one additional Pod and verify it initially cannot be scheduled.
 	triggerName := "autoscaler-trigger"
-	trigger, err := buildAutoscalingPod(namespace, triggerName, runLabelValue, poolKey, poolValue, *autoscalerAllocationMode, cfg, false)
+	trigger, err := buildAutoscalingPod(namespace, triggerName, runLabelValue, poolKey, poolValue, mode, cfg, false)
 	if err != nil {
 		t.Fatalf("Failed to build scale-up trigger Pod: %v", err)
 	}
@@ -185,7 +184,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FAIL: Scale-up trigger Pod did not become Unschedulable: %v", err)
 	}
-	if *autoscalerAllocationMode == allocationModeDevicePlugin && !strings.Contains(message, cfg.ExtendedResource) {
+	if mode == allocationModeDevicePlugin && !strings.Contains(message, cfg.ExtendedResource) {
 		t.Fatalf("FAIL: Scale-up trigger was Unschedulable for a reason unrelated to %s: %s", cfg.ExtendedResource, message)
 	}
 	t.Logf("Scale-up triggered by Pending Pod %s: %s", triggerName, message)
@@ -199,7 +198,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 		poolKey,
 		poolValue,
 		baselineNodes,
-		*autoscalerAllocationMode,
+		mode,
 		cfg,
 		*autoscalerScaleUpTimeout,
 	)
@@ -209,7 +208,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	createdPods[triggerName] = runningTrigger
 	scaledNode := scaledNodes[runningTrigger.Spec.NodeName]
 	scaledNodeRef := nodeReference{name: scaledNode.Name, uid: scaledNode.UID}
-	if err := verifyAutoscalerPoolCapacity(ctx, clientset, scaledNodes, *autoscalerAllocationMode, cfg); err != nil {
+	if err := verifyAutoscalerPoolCapacity(ctx, clientset, scaledNodes, mode, cfg); err != nil {
 		t.Fatalf("FAIL: Scaled pool did not preserve the accelerator allocation contract: %v", err)
 	}
 	t.Logf("PASS: Accelerator pool scaled from %d to %d nodes; trigger Pod is Running on new node %s", baselineCount, len(scaledNodes), scaledNodeRef.name)
@@ -250,16 +249,6 @@ func parseNodePoolLabel(value string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid label value %q: %s", labelValue, strings.Join(errs, "; "))
 	}
 	return key, labelValue, nil
-}
-
-func validateAutoscalerAllocationMode(mode string) error {
-	switch mode {
-	case allocationModeDevicePlugin, allocationModeDRA:
-		return nil
-	default:
-		return fmt.Errorf("supported values are %q and %q; automatic detection is not used because the target pool must be deterministic",
-			allocationModeDevicePlugin, allocationModeDRA)
-	}
 }
 
 func validateAutoscalerDurations(pending, scaleUp, scaleDown, stableFor time.Duration) error {

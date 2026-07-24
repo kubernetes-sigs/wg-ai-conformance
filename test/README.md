@@ -54,6 +54,11 @@ DRA has no portable per-node allocatable count, so the isolated baseline Pods
 and Pending trigger verify that the selected DeviceClass has effective capacity
 for exactly `N` allocations before scale-up.
 
+The suite-wide `-allocation-mode` flag controls the allocation mechanism for
+all accelerator tests. Its default `auto` mode prefers DRA when usable and
+otherwise falls back to the device plugin. Use an explicit mode when testing a
+hybrid cluster where the selected pool supports only one mechanism.
+
 Scale-up and scale-down can take significantly longer than Go's default test
 timeout, so use `-timeout 75m` or a larger value.
 
@@ -62,7 +67,7 @@ go test -v ./test \
   -run TestAcceleratorClusterAutoscaling \
   -timeout 75m \
   -accelerator-type=nvidia \
-  -autoscaler-allocation-mode=device-plugin \
+  -allocation-mode=device-plugin \
   -autoscaler-node-pool-label=agentpool=gpupool
 ```
 
@@ -73,7 +78,7 @@ go test -v ./test \
   -run TestAcceleratorClusterAutoscaling \
   -timeout 75m \
   -accelerator-type=nvidia \
-  -autoscaler-allocation-mode=dra \
+  -allocation-mode=dra \
   -autoscaler-node-pool-label=agentpool=gpupool
 ```
 

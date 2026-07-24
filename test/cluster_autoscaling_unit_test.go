@@ -61,19 +61,6 @@ func TestParseNodePoolLabel(t *testing.T) {
 	}
 }
 
-func TestValidateAutoscalerAllocationMode(t *testing.T) {
-	for _, mode := range []string{allocationModeDevicePlugin, allocationModeDRA} {
-		if err := validateAutoscalerAllocationMode(mode); err != nil {
-			t.Fatalf("validateAutoscalerAllocationMode(%q) unexpected error: %v", mode, err)
-		}
-	}
-	for _, mode := range []string{allocationModeAuto, "unknown"} {
-		if err := validateAutoscalerAllocationMode(mode); err == nil {
-			t.Fatalf("validateAutoscalerAllocationMode(%q) expected error", mode)
-		}
-	}
-}
-
 func TestValidateAutoscalerDurations(t *testing.T) {
 	valid := []time.Duration{time.Minute, time.Minute, 10 * time.Minute, 30 * time.Second}
 	if err := validateAutoscalerDurations(valid[0], valid[1], valid[2], valid[3]); err != nil {
