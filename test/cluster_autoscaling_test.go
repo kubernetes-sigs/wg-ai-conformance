@@ -41,7 +41,7 @@ var (
 
 func init() {
 	autoscalerNodePoolLabel = flag.String("autoscaler-node-pool-label", "",
-		"Node label identifying the accelerator pool to test, in key=value form. The test is skipped when unset.")
+		"Node label identifying the accelerator pool to test, in key=value form. The test is skipped when unset for platforms where cluster_autoscaling is N/A.")
 	autoscalerPendingTimeout = flag.Duration("autoscaler-pending-timeout", 2*time.Minute,
 		"How long to wait for the scale-up trigger Pod to become Unschedulable.")
 	autoscalerScaleUpTimeout = flag.Duration("autoscaler-scale-up-timeout", 20*time.Minute,
@@ -61,7 +61,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 		flag.Parse()
 	}
 	if *autoscalerNodePoolLabel == "" {
-		t.Skip("set -autoscaler-node-pool-label=<key>=<value> to run the accelerator cluster autoscaling test")
+		t.Skip("cluster autoscaling test is not configured; if the platform has no cluster autoscaler, mark cluster_autoscaling N/A, otherwise set -autoscaler-node-pool-label=<key>=<value>")
 	}
 
 	poolKey, poolValue, err := parseNodePoolLabel(*autoscalerNodePoolLabel)

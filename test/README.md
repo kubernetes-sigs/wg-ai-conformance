@@ -41,6 +41,12 @@ modify provider node-pool settings. Use a node label that uniquely identifies
 the target pool. The example below uses the AKS `agentpool` label; replace it
 with the corresponding label for your platform.
 
+The test is skipped when `-autoscaler-node-pool-label` is unset. Platforms that
+do not provide a cluster autoscaler or equivalent mechanism may mark the
+`cluster_autoscaling` requirement as `N/A` with a justification and leave the
+flag unset. Platforms that provide autoscaling must configure the flag and run
+the test; a skipped result is not evidence that the requirement is implemented.
+
 Baseline Pods use hostname anti-affinity to occupy distinct pool nodes. The
 trigger Pod carries neither that anti-affinity nor its matching label, so
 exhausted accelerator capacity is the only target-pool constraint that can

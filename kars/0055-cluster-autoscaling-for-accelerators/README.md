@@ -31,6 +31,12 @@ Prepare a node pool with N nodes, configured with a specific accelerator type, w
 
 The test verifies that a cluster autoscaler running on the platform scales node groups up and down based on pending pods requesting accelerator resources.
 
+This requirement is conditional. If the platform does not provide a cluster
+autoscaler or an equivalent mechanism, participants may mark
+`cluster_autoscaling` as `N/A` with a justification and skip this automated
+test. Platforms that provide such a mechanism must run the test and configure
+the provider-specific node-pool label described below.
+
 1. **Setup**: Configure a node pool with N nodes, each providing exactly 1 accelerator of type A, with a minimum size of N and a maximum size of at least N+1.
 
 2. **Scale-up case**: Create N+1 Pods, each requesting one accelerator of type A from the pool. Verify that at least one Pod is initially `Pending`, the node count grows to N+1, and the Pending Pod transitions to `Running`.
