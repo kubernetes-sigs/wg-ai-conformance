@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -20,10 +21,11 @@ import (
 )
 
 const (
-	autoscalerRunLabelKey    = "ai-conformance.kubernetes.io/autoscaler-run"
-	baselinePodTimeout       = 5 * time.Minute
-	baselineStabilityWindow  = 30 * time.Second
-	baselineStabilityTimeout = 2 * time.Minute
+	autoscalerRunLabelKey       = "ai-conformance.kubernetes.io/autoscaler-run"
+	baselinePodTimeout          = 5 * time.Minute
+	baselineStabilityWindow     = 30 * time.Second
+	baselineStabilityTimeout    = 2 * time.Minute
+	autoscalerPodDeadlineBuffer = 15 * time.Minute
 )
 
 type nodeReference struct {
@@ -76,6 +78,11 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Invalid autoscaler timeout configuration: %v", err)
 	}
+	podDeadlineSeconds := autoscalerPodDeadlineSeconds(
+		*autoscalerPendingTimeout,
+		*autoscalerScaleUpTimeout,
+		*autoscalerScaleDownTimeout,
+	)
 	cfg, err := lookupAcceleratorConfig(*acceleratorType)
 	if err != nil {
 		t.Fatalf("Invalid -accelerator-type: %v", err)
@@ -140,7 +147,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 	baselinePodNames := make([]string, 0, baselineCount)
 	for i := 0; i < baselineCount; i++ {
 		name := fmt.Sprintf("autoscaler-baseline-%d", i)
-		pod, err := buildAutoscalingPod(namespace, name, runLabelValue, poolKey, poolValue, mode, cfg, true)
+		pod, err := buildAutoscalingPod(namespace, name, runLabelValue, poolKey, poolValue, mode, cfg, podDeadlineSeconds, true)
 		if err != nil {
 			t.Fatalf("Failed to build baseline Pod %s: %v", name, err)
 		}
@@ -173,7 +180,7 @@ func TestAcceleratorClusterAutoscaling(t *testing.T) {
 
 	// Create one additional Pod and verify it initially cannot be scheduled.
 	triggerName := "autoscaler-trigger"
-	trigger, err := buildAutoscalingPod(namespace, triggerName, runLabelValue, poolKey, poolValue, mode, cfg, false)
+	trigger, err := buildAutoscalingPod(namespace, triggerName, runLabelValue, poolKey, poolValue, mode, cfg, podDeadlineSeconds, false)
 	if err != nil {
 		t.Fatalf("Failed to build scale-up trigger Pod: %v", err)
 	}
@@ -266,6 +273,11 @@ func validateAutoscalerDurations(pending, scaleUp, scaleDown, stableFor time.Dur
 	default:
 		return nil
 	}
+}
+
+func autoscalerPodDeadlineSeconds(pending, scaleUp, scaleDown time.Duration) int64 {
+	lifetime := baselinePodTimeout + pending + scaleUp + scaleDown + autoscalerPodDeadlineBuffer
+	return int64((lifetime + time.Second - 1) / time.Second)
 }
 
 func createBaselinePDB(
@@ -424,7 +436,9 @@ func verifyPoolIsIdle(
 	poolKey, poolValue, mode string,
 	cfg AcceleratorConfig,
 ) error {
-	pods, err := c.CoreV1().Pods(corev1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	pods, err := c.CoreV1().Pods(corev1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: nonTerminalPodFieldSelector(),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to list Pods while checking target-pool isolation: %w", err)
 	}
@@ -477,6 +491,13 @@ func verifyPoolIsIdle(
 	return nil
 }
 
+func nonTerminalPodFieldSelector() string {
+	return fields.AndSelectors(
+		fields.OneTermNotEqualSelector("status.phase", string(corev1.PodSucceeded)),
+		fields.OneTermNotEqualSelector("status.phase", string(corev1.PodFailed)),
+	).String()
+}
+
 func isDaemonOrMirrorPod(pod *corev1.Pod) bool {
 	if _, ok := pod.Annotations["kubernetes.io/config.mirror"]; ok {
 		return true
@@ -506,6 +527,7 @@ func podRequestsAccelerator(pod *corev1.Pod, mode string, cfg AcceleratorConfig)
 func buildAutoscalingPod(
 	namespace, name, runLabelValue, poolKey, poolValue, mode string,
 	cfg AcceleratorConfig,
+	activeDeadlineSeconds int64,
 	requireDistinctNode bool,
 ) (*corev1.Pod, error) {
 	pod, err := buildTestPod(
@@ -515,7 +537,7 @@ func buildAutoscalingPod(
 			Name:    "worker",
 			Image:   "ubuntu:22.04",
 			Command: []string{"/bin/sh", "-c"},
-			Args:    []string{"sleep 86400"},
+			Args:    []string{"sleep infinity"},
 		}},
 		testPodConfig{grantAccelerator: true, mode: mode, cfg: cfg},
 	)
@@ -524,6 +546,7 @@ func buildAutoscalingPod(
 	}
 
 	pod.Spec.NodeSelector = map[string]string{poolKey: poolValue}
+	pod.Spec.ActiveDeadlineSeconds = &activeDeadlineSeconds
 	if requireDistinctNode {
 		pod.Labels = map[string]string{autoscalerRunLabelKey: runLabelValue}
 		pod.Spec.Affinity = &corev1.Affinity{

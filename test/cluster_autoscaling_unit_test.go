@@ -9,8 +9,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestParseNodePoolLabel(t *testing.T) {
@@ -86,11 +88,22 @@ func TestValidateAutoscalerDurations(t *testing.T) {
 	}
 }
 
+func TestAutoscalerPodDeadlineSeconds(t *testing.T) {
+	pending := 1500 * time.Millisecond
+	scaleUp := 2500 * time.Millisecond
+	scaleDown := 3500 * time.Millisecond
+	want := int64((baselinePodTimeout + pending + scaleUp + scaleDown + autoscalerPodDeadlineBuffer + time.Second - 1) / time.Second)
+	if got := autoscalerPodDeadlineSeconds(pending, scaleUp, scaleDown); got != want {
+		t.Fatalf("autoscalerPodDeadlineSeconds = %d, want %d", got, want)
+	}
+}
+
 func TestBuildAutoscalingPod(t *testing.T) {
 	cfg := nvidiaConfig(t)
+	const deadlineSeconds int64 = 7200
 
 	t.Run("device plugin", func(t *testing.T) {
-		pod, err := buildAutoscalingPod("ns", "pod", "run-1", "agentpool", "gpu", allocationModeDevicePlugin, cfg, true)
+		pod, err := buildAutoscalingPod("ns", "pod", "run-1", "agentpool", "gpu", allocationModeDevicePlugin, cfg, deadlineSeconds, true)
 		if err != nil {
 			t.Fatalf("buildAutoscalingPod unexpected error: %v", err)
 		}
@@ -105,11 +118,12 @@ func TestBuildAutoscalingPod(t *testing.T) {
 		if got := pod.Spec.Containers[0].Resources.Limits[resourceName]; got.Cmp(resource.MustParse("1")) != 0 {
 			t.Fatalf("accelerator limit = %s, want 1", got.String())
 		}
+		verifyAutoscalingPodLifetime(t, pod, deadlineSeconds)
 		verifyAutoscalingAntiAffinity(t, pod, "run-1")
 	})
 
 	t.Run("DRA", func(t *testing.T) {
-		pod, err := buildAutoscalingPod("ns", "pod", "run-2", "agentpool", "gpu", allocationModeDRA, cfg, true)
+		pod, err := buildAutoscalingPod("ns", "pod", "run-2", "agentpool", "gpu", allocationModeDRA, cfg, deadlineSeconds, true)
 		if err != nil {
 			t.Fatalf("buildAutoscalingPod unexpected error: %v", err)
 		}
@@ -121,11 +135,12 @@ func TestBuildAutoscalingPod(t *testing.T) {
 			pod.Spec.Containers[0].Resources.Claims[0].Name != "claim" {
 			t.Fatalf("container claims = %v, want one claim", pod.Spec.Containers[0].Resources.Claims)
 		}
+		verifyAutoscalingPodLifetime(t, pod, deadlineSeconds)
 		verifyAutoscalingAntiAffinity(t, pod, "run-2")
 	})
 
 	t.Run("trigger omits anti-affinity", func(t *testing.T) {
-		pod, err := buildAutoscalingPod("ns", "pod", "run-3", "agentpool", "gpu", allocationModeDRA, cfg, false)
+		pod, err := buildAutoscalingPod("ns", "pod", "run-3", "agentpool", "gpu", allocationModeDRA, cfg, deadlineSeconds, false)
 		if err != nil {
 			t.Fatalf("buildAutoscalingPod unexpected error: %v", err)
 		}
@@ -135,7 +150,18 @@ func TestBuildAutoscalingPod(t *testing.T) {
 		if _, ok := pod.Labels[autoscalerRunLabelKey]; ok {
 			t.Fatalf("trigger labels = %v, want no autoscaler run label", pod.Labels)
 		}
+		verifyAutoscalingPodLifetime(t, pod, deadlineSeconds)
 	})
+}
+
+func verifyAutoscalingPodLifetime(t *testing.T, pod *corev1.Pod, wantDeadlineSeconds int64) {
+	t.Helper()
+	if pod.Spec.ActiveDeadlineSeconds == nil || *pod.Spec.ActiveDeadlineSeconds != wantDeadlineSeconds {
+		t.Fatalf("active deadline seconds = %v, want %d", pod.Spec.ActiveDeadlineSeconds, wantDeadlineSeconds)
+	}
+	if got := pod.Spec.Containers[0].Args; len(got) != 1 || got[0] != "sleep infinity" {
+		t.Fatalf("container args = %v, want [sleep infinity]", got)
+	}
 }
 
 func verifyAutoscalingAntiAffinity(t *testing.T, pod *corev1.Pod, runLabelValue string) {
@@ -269,6 +295,28 @@ func TestVerifyPoolIsIdle(t *testing.T) {
 	cfg := nvidiaConfig(t)
 	poolNode := labeledNode("node-a", map[string]string{"agentpool": "gpu"}, true)
 	poolNodes := map[string]corev1.Node{"node-a": *poolNode}
+
+	t.Run("filters terminal Pods at the API server", func(t *testing.T) {
+		client := fake.NewClientset()
+		if err := verifyPoolIsIdle(context.Background(), client, "test", poolNodes, "agentpool", "gpu", allocationModeDevicePlugin, cfg); err != nil {
+			t.Fatalf("verifyPoolIsIdle unexpected error: %v", err)
+		}
+		actions := client.Actions()
+		if len(actions) != 1 {
+			t.Fatalf("client actions = %d, want 1", len(actions))
+		}
+		listAction, ok := actions[0].(k8stesting.ListAction)
+		if !ok {
+			t.Fatalf("client action = %T, want ListAction", actions[0])
+		}
+		wantSelector, err := fields.ParseSelector(nonTerminalPodFieldSelector())
+		if err != nil {
+			t.Fatalf("parse expected Pod field selector: %v", err)
+		}
+		if got, want := listAction.GetListRestrictions().Fields.String(), wantSelector.String(); got != want {
+			t.Fatalf("Pod field selector = %q, want %q", got, want)
+		}
+	})
 
 	t.Run("ignores test and DaemonSet Pods", func(t *testing.T) {
 		controller := true
