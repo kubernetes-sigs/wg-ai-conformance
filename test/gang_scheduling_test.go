@@ -3,7 +3,6 @@ package conformance
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // TestGangScheduling verifies the Gang Scheduling requirement.
@@ -24,24 +22,7 @@ import (
 // to test all-or-nothing scheduling behavior without coupling to a specific implementation.
 // Ref: https://github.com/kubernetes-sigs/ai-conformance/blob/main/kars/0053-gang-scheduling/README.md
 func TestGangScheduling(t *testing.T) {
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if *kubeconfig != "" {
-		loadingRules.ExplicitPath = *kubeconfig
-	}
-
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
-	if err != nil {
-		t.Fatalf("Error building kubeconfig: %v", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		t.Fatalf("Error creating kubernetes client: %v", err)
-	}
+	clientset := getClientset(t)
 
 	ctx := context.Background()
 	namespace := *gangSchedulerNamespace
@@ -178,11 +159,53 @@ func verifyJobComplete(ctx context.Context, t *testing.T, clientset kubernetes.I
 	if err != nil {
 		t.Fatalf("Timeout waiting for positive job to complete: %v", err)
 	}
-	t.Logf("Positive job %s successfully completed", jobName)
+
+	// Verify scheduling evidence: ensure the job was actually processed
+	// by a gang scheduler and not just completed by the default scheduler.
+	t.Logf("Verifying scheduling evidence for completed job %s...", jobName)
+
+	completedJob, err := clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get completed job for verification: %v", err)
+	}
+
+	// Verify the gang-job-labels are present on the completed job,
+	// confirming the gang scheduling configuration was in effect.
+	if *gangJobLabels != "" {
+		pairs := strings.Split(*gangJobLabels, ",")
+		for _, pair := range pairs {
+			kv := strings.SplitN(pair, "=", 2)
+			if len(kv) == 2 {
+				if val, ok := completedJob.Labels[kv[0]]; !ok || val != kv[1] {
+					t.Errorf("Expected gang scheduling label %s=%s on completed job, got labels: %v", kv[0], kv[1], completedJob.Labels)
+				}
+			}
+		}
+	}
+
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-name=" + jobName,
+	})
+	if err != nil {
+		t.Fatalf("Failed to list pods for completed job: %v", err)
+	}
+	if len(pods.Items) == 0 {
+		t.Fatalf("No pods found for completed job %s - job may not have been admitted by the gang scheduler", jobName)
+	}
+
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == "" {
+			t.Errorf("Pod %s of completed job has no node assignment", pod.Name)
+		}
+		t.Logf("  Pod %s: schedulerName=%s, nodeName=%s, phase=%s",
+			pod.Name, pod.Spec.SchedulerName, pod.Spec.NodeName, pod.Status.Phase)
+	}
+
+	t.Logf("Positive job %s completed with %d pods verified", jobName, len(pods.Items))
 }
 
 func verifyJobSuspendedOrPending(ctx context.Context, t *testing.T, clientset kubernetes.Interface, namespace, jobName string) {
-	verificationWindow := 10 * time.Second
+	verificationWindow := *gangNegativeWindow
 	pollInterval := 1 * time.Second
 	t.Logf("Verifying negative job %s remains suspended or pending without partial pods for %v...", jobName, verificationWindow)
 
@@ -192,13 +215,11 @@ func verifyJobSuspendedOrPending(ctx context.Context, t *testing.T, clientset ku
 			return false, err
 		}
 
-		if job.Spec.Suspend != nil && *job.Spec.Suspend {
-			// Job is suspended, which is valid for gang scheduling (e.g., Kueue)
-			// Continue polling to ensure it remains suspended
-			return false, nil
-		}
+		isSuspended := job.Spec.Suspend != nil && *job.Spec.Suspend
 
-		// If not suspended (e.g., Volcano), verify no pods are running or bound to a Node
+		// Always list the Job's pods and assert zero bound/running pods,
+		// even when the job is suspended. A broken controller could suspend
+		// the Job after some pods were already created/bound.
 		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "job-name=" + jobName,
 		})
@@ -208,16 +229,17 @@ func verifyJobSuspendedOrPending(ctx context.Context, t *testing.T, clientset ku
 
 		for _, pod := range pods.Items {
 			if pod.Status.Phase == corev1.PodRunning || pod.Spec.NodeName != "" {
-				return false, fmt.Errorf("negative job %s has a running or bound pod %s (partial scheduling)", jobName, pod.Name)
+				return false, fmt.Errorf("negative job %s has a running or bound pod %s (partial scheduling detected, suspended=%v)", jobName, pod.Name, isSuspended)
 			}
 		}
 
+		// Continue polling - we want to observe the entire verification window
 		return false, nil
 	})
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "context deadline exceeded") {
-			t.Logf("Negative job %s successfully remained suspended or pending with 0 bound pods throughout the verification window.", jobName)
+			t.Logf("Negative job %s successfully remained suspended or pending with 0 bound pods throughout the %v verification window.", jobName, verificationWindow)
 		} else {
 			t.Fatalf("Failed to verify negative job: %v", err)
 		}

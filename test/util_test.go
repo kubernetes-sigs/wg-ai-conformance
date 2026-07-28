@@ -57,6 +57,7 @@ var (
 	allocationMode             *string
 	gangSchedulerNamespace     *string
 	gangJobLabels              *string
+	gangNegativeWindow         *time.Duration
 	acceleratorConfigs         = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
@@ -80,6 +81,26 @@ func init() {
 		"Namespace pre-configured with gang scheduling resources (e.g., LocalQueue). If empty, the test will generate a random namespace.")
 	gangJobLabels = flag.String("gang-job-labels", "",
 		"Comma-separated key=value labels to apply to the generic gang scheduling Job (e.g. kueue.x-k8s.io/queue-name=e2e-lq).")
+	gangNegativeWindow = flag.Duration("gang-negative-window", 30*time.Second,
+		"Duration to observe the negative gang scheduling test job to verify no pods are partially scheduled.")
+}
+
+// getClientset creates a Kubernetes clientset using the kubeconfig flag.
+// Shared helper to avoid duplicating kubeconfig loading across test files.
+func getClientset(t *testing.T) kubernetes.Interface {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if *kubeconfig != "" {
+		loadingRules.ExplicitPath = *kubeconfig
+	}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		t.Fatalf("Error building kubeconfig: %v", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("Error creating kubernetes client: %v", err)
+	}
+	return clientset
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,
