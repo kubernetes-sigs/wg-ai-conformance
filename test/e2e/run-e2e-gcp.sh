@@ -31,6 +31,7 @@ GCE_IMAGE_FAMILY="${GCE_IMAGE_FAMILY:-common-cu129-ubuntu-2404-nvidia-580}"
 GCE_IMAGE_PROJECT="${GCE_IMAGE_PROJECT:-deeplearning-platform-release}"
 K8S_VERSION="${K8S_VERSION:-v1.35.0}"
 GPU_OPERATOR_VERSION="${GPU_OPERATOR_VERSION:-v26.3.1}"
+GANG_SCHEDULER="${GANG_SCHEDULER:-kueue}"
 BUILD_ID="${BUILD_ID:-$(date +%s)}"
 VM_NAME="ai-conformance-e2e-${BUILD_ID}"
 
@@ -254,7 +255,7 @@ kubectl get nodes -o wide
 REMOTE_SCRIPT
 
 echo "================================================================"
-echo "3. Deploying Cluster Prerequisites (NVIDIA GPU Operator / DRA Driver)"
+echo "3. Deploying Cluster Prerequisites (NVIDIA DRA Driver & Kueue)"
 echo "================================================================"
 gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<REMOTE_STACK
 set -euo pipefail
@@ -279,14 +280,67 @@ helm upgrade -i nvidia-dra-driver nvidia/nvidia-dra-driver-gpu \
 echo "Checking ResourceSlices & DeviceClasses:"
 kubectl get deviceclasses || true
 kubectl get resourceslices -o wide || true
+
+if [ "${GANG_SCHEDULER}" = "kueue" ]; then
+  echo "Installing Kueue..."
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.18.2/manifests.yaml
+
+  echo "Waiting for Kueue controller manager to be ready..."
+  kubectl rollout status deployment -n kueue-system kueue-controller-manager --timeout=5m
+
+  echo "Creating Kueue resources (with retries for webhook readiness)..."
+  for i in {1..10}; do
+    cat <<EOF | kubectl apply -f - && break
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: e2e-flavor
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: e2e-cq
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+  - coveredResources: ["cpu", "memory"]
+    flavors:
+    - name: e2e-flavor
+      resources:
+      - name: "cpu"
+        nominalQuota: 10
+      - name: "memory"
+        nominalQuota: 10Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-conformance-gang-scheduling
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: e2e-lq
+  namespace: ai-conformance-gang-scheduling
+spec:
+  clusterQueue: e2e-cq
+EOF
+    echo "Webhook might not be ready yet, retrying in 5 seconds... ($i/10)"
+    sleep 5
+  done
+
+  echo "Waiting for ClusterQueue to be active..."
+  kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
+fi
+
 REMOTE_STACK
 
 echo "================================================================"
 echo "4. Executing AI Conformance Test Suite (test/)"
 echo "================================================================"
-gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<'REMOTE_TEST'
+gcloud compute ssh "${VM_NAME}" --project="${GCP_PROJECT}" --zone="${GCE_ZONE}" --command="bash -s" <<REMOTE_TEST
 set -euo pipefail
-export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
+export PATH="/usr/local/go/bin:\${HOME}/go/bin:\${PATH}"
 
 cd ~/ai-conformance
 mkdir -p _artifacts
@@ -295,6 +349,8 @@ echo "Running go test ./test/..."
 go test -v ./test/... \
     -accelerator-type=nvidia \
     -allocation-mode=auto \
+    -gang-scheduler-namespace=ai-conformance-gang-scheduling \
+    -gang-job-labels="kueue.x-k8s.io/queue-name=e2e-lq" \
     -json | tee _artifacts/results.json
 REMOTE_TEST
 

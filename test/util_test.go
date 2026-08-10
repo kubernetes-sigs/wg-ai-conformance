@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
+
 )
 
 type AcceleratorConfig struct {
@@ -52,8 +54,11 @@ const (
 var (
 	kubeconfig         *string
 	acceleratorType    *string
-	allocationMode     *string
-	acceleratorConfigs = map[string]AcceleratorConfig{
+	allocationMode             *string
+	gangSchedulerNamespace     *string
+	gangJobLabels              *string
+	gangNegativeWindow         *time.Duration
+	acceleratorConfigs         = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
 			DRADriver:        "gpu.nvidia.com",
@@ -72,6 +77,30 @@ func init() {
 	acceleratorType = flag.String("accelerator-type", "nvidia", "The type of accelerator to test. Supported types: 'nvidia' (default). Support for other types is being added.")
 	allocationMode = flag.String("allocation-mode", allocationModeAuto,
 		"How test pods request accelerators: 'dra' (ResourceClaims), 'device-plugin' (extended resources such as nvidia.com/gpu), or 'auto' (default; prefer DRA when usable, otherwise fall back to the device plugin).")
+	gangSchedulerNamespace = flag.String("gang-scheduler-namespace", "",
+		"Namespace pre-configured with gang scheduling resources (e.g., LocalQueue). If empty, the test will generate a random namespace.")
+	gangJobLabels = flag.String("gang-job-labels", "",
+		"Comma-separated key=value labels to apply to the generic gang scheduling Job (e.g. kueue.x-k8s.io/queue-name=e2e-lq).")
+	gangNegativeWindow = flag.Duration("gang-negative-window", 30*time.Second,
+		"Duration to observe the negative gang scheduling test job to verify no pods are partially scheduled.")
+}
+
+// getClientset creates a Kubernetes clientset using the kubeconfig flag.
+// Shared helper to avoid duplicating kubeconfig loading across test files.
+func getClientset(t *testing.T) kubernetes.Interface {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if *kubeconfig != "" {
+		loadingRules.ExplicitPath = *kubeconfig
+	}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		t.Fatalf("Error building kubeconfig: %v", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("Error creating kubernetes client: %v", err)
+	}
+	return clientset
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,
@@ -742,3 +771,4 @@ func acceleratorProbingContainer(name string, cfg AcceleratorConfig) corev1.Cont
 func randomNamespaceName(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, rand.String(5))
 }
+

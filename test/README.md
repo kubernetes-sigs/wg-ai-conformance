@@ -30,6 +30,7 @@ go test -v ./test -run 'Test(DetectAllocationMode|ExtendedResourceGuardFailsClos
 | Test Name | Requirement Covered | Requirement Level |
 |-|-|-|
 | `TestSecureAcceleratorAccess` | Secure Accelerator Access | MUST |
+| `TestGangScheduling` | Gang Scheduling | MUST |
 
 ## Vendor Customization & Neutrality
 
