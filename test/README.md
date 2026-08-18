@@ -42,8 +42,16 @@ If a specific test is not applicable to your platform (i.e., you answered "N/A" 
 
 ## Automation & CI
 
-For CI environments, you can output the results in machine-readable JSON format, which can be converted to JUnit/XML for reporting.
+For CI environments and certification submissions, you can output the results in machine-readable JSON format, which can be converted to JUnit/XML for reporting.
 
 ```bash
+# Run tests and capture logs
+go test -v ./test | tee e2e.log
+
+# Generate machine-readable JSON
 go test -v ./test -json > results.json
 ```
+
+### Using Test Results for Certification (Hybrid Approach)
+
+When submitting your conformance results for v1.37+, you can use the generated `e2e.log` and `results.json` (or `junit.xml`) as evidence for automated test cases. Link them in your `KubernetesAIConformance-1.37.yaml` file under the respective requirement's `evidence` field.
