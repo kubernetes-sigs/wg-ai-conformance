@@ -52,6 +52,22 @@ go test -v ./test | tee e2e.log
 go test -v ./test -json > results.json
 ```
 
-### Using Test Results for Certification (Hybrid Approach)
+### Generating Test Results for Certification (Hybrid Approach)
 
-When submitting your conformance results for v1.37+, you can use the generated `e2e.log` and `results.json` (or `junit.xml`) as evidence for automated test cases. Link them in your `KubernetesAIConformance-1.37.yaml` file under the respective requirement's `evidence` field.
+When submitting your conformance results for v1.37+, you can use the generated `e2e.log` and `results.json` (or `junit.xml`) as evidence for automated test cases. Link them in your `KubernetesAIConformance-1.NN.yaml` file under the respective requirement's `evidence` field.
+
+You can generate the required test artifacts using the following commands:
+
+```bash
+# Capture full output log
+go test -v ./test | tee e2e.log
+
+# Generate machine-readable JSON
+go test -v ./test -json > results.json
+
+# Generate JUnit XML report (requires gotestsum or go-junit-report)
+go run gotest.tools/gotestsum@latest --junitfile junit.xml -- ./test
+# OR
+go test -v ./test 2>&1 | go run github.com/jstemmer/go-junit-report/v2@latest > junit.xml
+```
+
