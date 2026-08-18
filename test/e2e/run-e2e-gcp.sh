@@ -346,6 +346,13 @@ fi
 
 REMOTE_STACK
 
+echo "Preparing go test arguments..."
+if [ "${GANG_SCHEDULER}" = "kueue" ]; then
+    GANG_LABELS="-gang-job-labels=\"kueue.x-k8s.io/queue-name=e2e-lq\""
+else
+    GANG_LABELS=""
+fi
+
 echo "================================================================"
 echo "4. Executing AI Conformance Test Suite (test/)"
 echo "================================================================"
@@ -355,13 +362,6 @@ export PATH="/usr/local/go/bin:\${HOME}/go/bin:\${PATH}"
 
 cd ~/ai-conformance
 mkdir -p _artifacts
-
-echo "Preparing go test arguments..."
-if [ "${GANG_SCHEDULER}" = "kueue" ]; then
-    GANG_LABELS="-gang-job-labels=\"kueue.x-k8s.io/queue-name=e2e-lq\""
-else
-    GANG_LABELS=""
-fi
 
 echo "Running go test ./test/..."
 go test -v ./test/... \
