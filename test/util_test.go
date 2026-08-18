@@ -18,6 +18,7 @@ import (
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
@@ -63,6 +64,7 @@ var (
 	gangSchedulerNamespace *string
 	gangJobLabels          *string
 	gangNegativeWindow     *time.Duration
+	gangSchedulerName      *string
 	acceleratorConfigs     = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
@@ -88,6 +90,8 @@ func init() {
 		"Comma-separated key=value labels to apply to the generic gang scheduling Job (e.g. kueue.x-k8s.io/queue-name=e2e-lq).")
 	gangNegativeWindow = flag.Duration("gang-negative-window", 30*time.Second,
 		"Duration to observe the negative gang scheduling test job to verify no pods are partially scheduled.")
+	gangSchedulerName = flag.String("gang-scheduler-name", "",
+		"Name of the gang scheduler being tested (e.g. 'volcano'). Used to apply adapter logic if required.")
 }
 
 // getClientset creates a Kubernetes clientset using the kubeconfig flag.
@@ -150,6 +154,23 @@ func deleteNamespaceAndWait(ctx context.Context, t *testing.T, c kubernetes.Inte
 		return fmt.Errorf("namespace %s was not deleted before the cleanup deadline%s: %w", namespace, lastAPIErrorSuffix(lastAPIError), err)
 	}
 	return nil
+}
+
+// getDynamicClient creates a dynamic Kubernetes client using the kubeconfig flag.
+func getDynamicClient(t *testing.T) dynamic.Interface {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if *kubeconfig != "" {
+		loadingRules.ExplicitPath = *kubeconfig
+	}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		t.Fatalf("Error building kubeconfig: %v", err)
+	}
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("Error creating dynamic client: %v", err)
+	}
+	return client
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,

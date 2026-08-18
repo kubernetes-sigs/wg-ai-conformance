@@ -331,6 +331,17 @@ EOF
 
   echo "Waiting for ClusterQueue to be active..."
   kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
+elif [ "${GANG_SCHEDULER}" = "volcano" ]; then
+  echo "Installing Volcano..."
+  kubectl apply -f https://raw.githubusercontent.com/volcano-sh/volcano/v1.9.0/installer/volcano-development.yaml
+
+  echo "Waiting for Volcano controllers to be ready..."
+  kubectl rollout status deployment -n volcano-system volcano-admission --timeout=5m
+  kubectl rollout status deployment -n volcano-system volcano-controllers --timeout=5m
+  kubectl rollout status deployment -n volcano-system volcano-scheduler --timeout=5m
+
+  echo "Creating test namespace..."
+  kubectl create namespace ai-conformance-gang-scheduling --dry-run=client -o yaml | kubectl apply -f -
 fi
 
 REMOTE_STACK
@@ -345,12 +356,20 @@ export PATH="/usr/local/go/bin:\${HOME}/go/bin:\${PATH}"
 cd ~/ai-conformance
 mkdir -p _artifacts
 
+echo "Preparing go test arguments..."
+if [ "${GANG_SCHEDULER}" = "kueue" ]; then
+    GANG_LABELS="-gang-job-labels=\"kueue.x-k8s.io/queue-name=e2e-lq\""
+else
+    GANG_LABELS=""
+fi
+
 echo "Running go test ./test/..."
 go test -v ./test/... \
     -accelerator-type=nvidia \
     -allocation-mode=auto \
     -gang-scheduler-namespace=ai-conformance-gang-scheduling \
-    -gang-job-labels="kueue.x-k8s.io/queue-name=e2e-lq" \
+    -gang-scheduler-name=${GANG_SCHEDULER} \
+    ${GANG_LABELS} \
     -json | tee _artifacts/results.json
 REMOTE_TEST
 
