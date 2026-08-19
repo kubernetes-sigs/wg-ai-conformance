@@ -238,7 +238,7 @@ func verifyJobSuspendedOrPending(ctx context.Context, t *testing.T, clientset ku
 	})
 
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "context deadline exceeded") {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "context deadline") {
 			t.Logf("Negative job %s successfully remained suspended or pending with 0 bound pods throughout the %v verification window.", jobName, verificationWindow)
 		} else {
 			t.Fatalf("Failed to verify negative job: %v", err)
