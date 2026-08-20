@@ -20,22 +20,31 @@ func TestAcceleratorProbeCommand(t *testing.T) {
 		t.Fatalf("create test control-device directory: %v", err)
 	}
 
-	pattern := filepath.Join(dir, filepath.Base(cfg.DevicePattern))
-	output, err := exec.Command("/bin/sh", "-c", acceleratorProbeCommand(pattern)).CombinedOutput()
-	if err != nil {
-		t.Fatalf("run accelerator probe: %v: %s", err, output)
-	}
-	if got, want := strings.TrimSpace(string(output)), "RESULT: ACCELERATOR_COUNT=2"; got != want {
-		t.Fatalf("probe output = %q, want %q", got, want)
-	}
-
-	emptyPattern := filepath.Join(dir, "missing[0-9]*")
-	output, err = exec.Command("/bin/sh", "-c", acceleratorProbeCommand(emptyPattern)).CombinedOutput()
-	if err != nil {
-		t.Fatalf("run empty accelerator probe: %v: %s", err, output)
-	}
-	if got, want := strings.TrimSpace(string(output)), "RESULT: ACCELERATOR_COUNT=0"; got != want {
-		t.Fatalf("empty probe output = %q, want %q", got, want)
+	for _, tc := range []struct {
+		name    string
+		pattern string
+		want    string
+	}{
+		{
+			name:    "counts matching device nodes",
+			pattern: filepath.Join(dir, filepath.Base(cfg.DevicePattern)),
+			want:    "RESULT: ACCELERATOR_COUNT=2",
+		},
+		{
+			name:    "no matching device nodes",
+			pattern: filepath.Join(dir, "missing[0-9]*"),
+			want:    "RESULT: ACCELERATOR_COUNT=0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, err := exec.Command("/bin/sh", "-c", acceleratorProbeCommand(tc.pattern)).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run accelerator probe: %v: %s", err, output)
+			}
+			if got := strings.TrimSpace(string(output)); got != tc.want {
+				t.Errorf("probe output = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
