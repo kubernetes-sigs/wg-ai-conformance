@@ -19,10 +19,10 @@ go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>] [-acceler
 
 Run `go test ./test -args -help` for details about each flag.
 
-The allocation-mode detection and pod-construction logic also has hermetic unit tests (fake clientset, no cluster needed):
+The allocation-mode detection, pod-construction, and device-probe logic also has hermetic unit tests that need no cluster (Kubernetes API tests use a fake clientset):
 
 ```bash
-go test -v ./test -run 'Test(DetectAllocationMode|ExtendedResourceGuardFailsClosed|LookupAcceleratorConfig|BuildTestPod|PodGeneratedClaims|DeleteAndAwaitRelease)$'
+go test -v ./test -run 'Test(DetectAllocationMode|ExtendedResourceGuardFailsClosed|LookupAcceleratorConfig|BuildTestPod|PodGeneratedClaims|DeleteAndAwaitRelease|AcceleratorProbeCommand|LogsContainExactLine)$'
 ```
 
 ### Test Cases Covered

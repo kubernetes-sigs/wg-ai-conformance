@@ -80,7 +80,7 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 	// t.Parallel), so the refinement is ordered before its use.
 	acceleratorNode := env.acceleratorNode
 
-	// Getting an accelerator from inside a Pod that requests an accelerator should succeed
+	// A container that requests one accelerator should see exactly one.
 	t.Run("PositiveAccessTest", func(t *testing.T) {
 		podName := "pos-pod"
 		var pod *corev1.Pod
@@ -90,10 +90,10 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		pod = runTestPod(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("prober", cfg)},
 			testPodConfig{grantAccelerator: true, mode: mode, cfg: cfg})
 		acceleratorNode = pod.Spec.NodeName
-		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "prober", true)
+		verifyAcceleratorCountInLogs(ctx, t, clientset, namespace, podName, "prober", requestedAcceleratorCount)
 	})
 
-	// Getting an accelerator from inside a Pod that does not request an accelerator should fail.
+	// A container that does not request an accelerator should see none.
 	// The pod is pinned to the accelerator node the positive pod ran on — an
 	// unpinned request-less pod could schedule onto a CPU-only node and pass
 	// vacuously without proving isolation.
@@ -112,10 +112,10 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		})
 		pod = runTestPod(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("prober", cfg)},
 			testPodConfig{grantAccelerator: false, mode: mode, nodeName: acceleratorNode, cfg: cfg})
-		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "prober", false)
+		verifyAcceleratorCountInLogs(ctx, t, clientset, namespace, podName, "prober", 0)
 	})
 
-	// Getting an accelerator from another container inside a Pod should fail
+	// An accelerator granted to one container must not be visible to another.
 	t.Run("MultiContainerIsolationTest", func(t *testing.T) {
 		podName := "multi-container-pod"
 		var pod *corev1.Pod
@@ -125,8 +125,8 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		pod = runTestPod(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("authorized", cfg), acceleratorProbingContainer("unauthorized", cfg)},
 			testPodConfig{grantAccelerator: true, mode: mode, cfg: cfg})
 
-		// The first container can access the accelerator, the second cannot
-		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "authorized", true)
-		verifyHardwareInLogs(ctx, t, clientset, namespace, podName, "unauthorized", false)
+		// The first container sees exactly the requested count; the second sees none.
+		verifyAcceleratorCountInLogs(ctx, t, clientset, namespace, podName, "authorized", requestedAcceleratorCount)
+		verifyAcceleratorCountInLogs(ctx, t, clientset, namespace, podName, "unauthorized", 0)
 	})
 }

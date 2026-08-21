@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,7 +19,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
-
 )
 
 type AcceleratorConfig struct {
@@ -39,32 +37,36 @@ type AcceleratorConfig struct {
 	// accelerators.
 	ExtendedResource string
 	TaintKey         string
-	DevicePath       string
+	// DevicePattern is a shell glob that matches allocatable accelerator
+	// device nodes while excluding auxiliary and control devices.
+	DevicePattern string
 }
 
 // Allocation modes for granting accelerators to test pods. The conformance
 // requirement permits mediation by "device plugin or DRA", so both mechanisms
 // are supported.
 const (
-	allocationModeAuto         = "auto"
-	allocationModeDRA          = "dra"
-	allocationModeDevicePlugin = "device-plugin"
+	allocationModeAuto                 = "auto"
+	allocationModeDRA                  = "dra"
+	allocationModeDevicePlugin         = "device-plugin"
+	requestedAcceleratorCount    int64 = 1
+	acceleratorCountResultPrefix       = "RESULT: ACCELERATOR_COUNT="
 )
 
 var (
-	kubeconfig         *string
-	acceleratorType    *string
-	allocationMode             *string
-	gangSchedulerNamespace     *string
-	gangJobLabels              *string
-	gangNegativeWindow         *time.Duration
-	acceleratorConfigs         = map[string]AcceleratorConfig{
+	kubeconfig             *string
+	acceleratorType        *string
+	allocationMode         *string
+	gangSchedulerNamespace *string
+	gangJobLabels          *string
+	gangNegativeWindow     *time.Duration
+	acceleratorConfigs     = map[string]AcceleratorConfig{
 		"nvidia": {
 			DeviceClass:      "gpu.nvidia.com",
 			DRADriver:        "gpu.nvidia.com",
 			ExtendedResource: "nvidia.com/gpu",
 			TaintKey:         "nvidia.com/gpu",
-			DevicePath:       "/dev/nvidia*",
+			DevicePattern:    "/dev/nvidia[0-9]*",
 		},
 		// Add other vendors here
 	}
@@ -138,7 +140,7 @@ func setupTestEnvironment(ctx context.Context, t *testing.T, c kubernetes.Interf
 						Name: testRequestName,
 						Exactly: &resourcev1.ExactDeviceRequest{
 							DeviceClassName: cfg.DeviceClass,
-							Count:           1,
+							Count:           requestedAcceleratorCount,
 						},
 					}},
 				},
@@ -533,7 +535,7 @@ func buildTestPod(ns, name string, containers []corev1.Container, pc testPodConf
 			if pod.Spec.Containers[0].Resources.Limits == nil {
 				pod.Spec.Containers[0].Resources.Limits = corev1.ResourceList{}
 			}
-			pod.Spec.Containers[0].Resources.Limits[resourceName] = resource.MustParse("1")
+			pod.Spec.Containers[0].Resources.Limits[resourceName] = *resource.NewQuantity(requestedAcceleratorCount, resource.DecimalSI)
 		default:
 			return nil, fmt.Errorf("unknown allocation mode %q", pc.mode)
 		}
@@ -724,22 +726,18 @@ func deleteAndAwaitRelease(ctx context.Context, c kubernetes.Interface, ns, name
 	return nil
 }
 
-// Verify that the container has access to the hardware (e.g. GPU) by checking its logs
-func verifyHardwareInLogs(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, podName, containerName string, expectSuccess bool) {
+// Verify that the container sees exactly the expected number of accelerator
+// device nodes by checking its logs.
+func verifyAcceleratorCountInLogs(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, podName, containerName string, expectedCount int64) {
 	var logs string
 	pass := false
-	var expectedText string
-	if expectSuccess {
-		expectedText = "RESULT: ACCELERATOR_FOUND"
-	} else {
-		expectedText = "RESULT: ACCELERATOR_MISSING"
-	}
+	expectedText := fmt.Sprintf("%s%d", acceleratorCountResultPrefix, expectedCount)
 	t.Logf("Waiting to see if Pod %s/%s logs contain '%s'...", podName, containerName, expectedText)
 	for i := 0; i < 2; i++ {
 		rawLogs, err := c.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{Container: containerName}).DoRaw(ctx)
 		if err == nil {
 			logs = string(rawLogs)
-			if strings.Contains(logs, expectedText) {
+			if logsContainExactLine(logs, expectedText) {
 				pass = true
 				break
 			}
@@ -748,12 +746,30 @@ func verifyHardwareInLogs(ctx context.Context, t *testing.T, c kubernetes.Interf
 	}
 
 	if pass {
-		t.Logf("PASS: %s isolation/access verified.", containerName)
-	} else if expectSuccess {
-		t.Errorf("FAIL: Container %s in Pod %s should see '%s'. Logs: %s", containerName, podName, expectedText, logs)
+		t.Logf("PASS: %s sees exactly %d accelerator device(s).", containerName, expectedCount)
+	} else if expectedCount > 0 {
+		t.Errorf("FAIL: Container %s in Pod %s should see exactly %d accelerator device(s). Logs: %s", containerName, podName, expectedCount, logs)
 	} else {
-		t.Errorf("VIOLATION: Unauthorized Container %s in Pod %s saw '%s'! Logs: %s", containerName, podName, expectedText, logs)
+		t.Errorf("VIOLATION: Unauthorized Container %s in Pod %s should see no accelerator devices. Logs: %s", containerName, podName, logs)
 	}
+}
+
+func logsContainExactLine(logs, expected string) bool {
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.TrimSpace(line) == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func acceleratorProbeCommand(devicePattern string) string {
+	return fmt.Sprintf(`count=0
+for device in %s; do
+  [ -e "$device" ] || continue
+  count=$((count + 1))
+done
+echo "%s$count"`, devicePattern, acceleratorCountResultPrefix)
 }
 
 // Returns a container that probes for accelerator
@@ -763,7 +779,7 @@ func acceleratorProbingContainer(name string, cfg AcceleratorConfig) corev1.Cont
 		Image:   "ubuntu:22.04",
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{
-			fmt.Sprintf("if ls %s > /dev/null 2>&1; then echo 'RESULT: ACCELERATOR_FOUND'; else echo 'RESULT: ACCELERATOR_MISSING'; fi; sleep 3600", cfg.DevicePath),
+			acceleratorProbeCommand(cfg.DevicePattern) + "\nsleep 3600",
 		},
 	}
 }
@@ -771,4 +787,3 @@ func acceleratorProbingContainer(name string, cfg AcceleratorConfig) corev1.Cont
 func randomNamespaceName(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, rand.String(5))
 }
-
