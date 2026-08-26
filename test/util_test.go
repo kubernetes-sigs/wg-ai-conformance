@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"sort"
@@ -14,10 +15,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 )
 
@@ -90,6 +93,7 @@ func init() {
 // getClientset creates a Kubernetes clientset using the kubeconfig flag.
 // Shared helper to avoid duplicating kubeconfig loading across test files.
 func getClientset(t *testing.T) kubernetes.Interface {
+	t.Helper()
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if *kubeconfig != "" {
 		loadingRules.ExplicitPath = *kubeconfig
@@ -103,6 +107,49 @@ func getClientset(t *testing.T) kubernetes.Interface {
 		t.Fatalf("Error creating kubernetes client: %v", err)
 	}
 	return clientset
+}
+
+func deleteNamespaceAndWait(ctx context.Context, t *testing.T, c kubernetes.Interface, namespace string) error {
+	t.Helper()
+	t.Logf("Cleaning up namespace %s...", namespace)
+	var lastAPIError error
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Minute, true, func(ctx context.Context) (bool, error) {
+		err := c.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
+		switch {
+		case err == nil, apierrors.IsNotFound(err):
+			lastAPIError = nil
+			return true, nil
+		case isRetryableAPIError(err):
+			lastAPIError = err
+			return false, nil
+		default:
+			return false, err
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to request deletion of namespace %s%s: %w", namespace, lastAPIErrorSuffix(lastAPIError), err)
+	}
+
+	err = wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Minute, true, func(ctx context.Context) (bool, error) {
+		_, err := c.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			lastAPIError = nil
+			return true, nil
+		case err == nil:
+			lastAPIError = nil
+			return false, nil
+		case isRetryableAPIError(err):
+			lastAPIError = err
+			return false, nil
+		default:
+			return false, err
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("namespace %s was not deleted before the cleanup deadline%s: %w", namespace, lastAPIErrorSuffix(lastAPIError), err)
+	}
+	return nil
 }
 
 // lookupAcceleratorConfig resolves an -accelerator-type value to its config,
@@ -243,12 +290,17 @@ func usableNodes(ctx context.Context, c kubernetes.Interface) (map[string]corev1
 	}
 	usable := make(map[string]corev1.Node)
 	for _, node := range nodes.Items {
-		if node.Spec.Unschedulable || !isNodeReady(&node) {
+		if node.Spec.Unschedulable || !nodeIsReady(&node) {
 			continue
 		}
 		usable[node.Name] = node
 	}
 	return usable, nil
+}
+
+func nodeIsReady(node *corev1.Node) bool {
+	_, ready := nodeutil.GetNodeCondition(&node.Status, corev1.NodeReady)
+	return ready != nil && ready.Status == corev1.ConditionTrue
 }
 
 // checkDRAUsable verifies that DRA is usable for the accelerator under test:
@@ -487,15 +539,6 @@ func checkExtendedResourceNotDRABacked(ctx context.Context, c kubernetes.Interfa
 	return nil
 }
 
-func isNodeReady(node *corev1.Node) bool {
-	for _, cond := range node.Status.Conditions {
-		if cond.Type == corev1.NodeReady {
-			return cond.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
-
 // testPodConfig controls how buildTestPod grants accelerators.
 type testPodConfig struct {
 	// grantAccelerator grants the FIRST container one accelerator using mode.
@@ -544,6 +587,50 @@ func buildTestPod(ns, name string, containers []corev1.Container, pc testPodConf
 	return pod, nil
 }
 
+func createTestPod(ctx context.Context, t *testing.T, c kubernetes.Interface, pod *corev1.Pod) {
+	t.Helper()
+	if _, err := c.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Failed to create Pod %s: %v", pod.Name, err)
+	}
+}
+
+// waitForPodsRunning waits until every named Pod reaches Running and returns
+// their latest objects. This is shared by tests that coordinate multiple Pods.
+func waitForPodsRunning(
+	ctx context.Context,
+	c kubernetes.Interface,
+	namespace string,
+	names []string,
+	timeout time.Duration,
+) (map[string]*corev1.Pod, error) {
+	running := make(map[string]*corev1.Pod, len(names))
+	var lastAPIError error
+	err := wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		clear(running)
+		for _, name := range names {
+			pod, err := c.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				lastAPIError = err
+				if isRetryableAPIError(err) {
+					return false, nil
+				}
+				return false, err
+			}
+			lastAPIError = nil
+			if pod.Status.Phase != corev1.PodRunning {
+				return false, nil
+			}
+			running[name] = pod
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("Pods did not all reach Running within %s%s: %w",
+			timeout, lastAPIErrorSuffix(lastAPIError), err)
+	}
+	return running, nil
+}
+
 // runTestPod creates the pod described by pc, waits for it to reach Running,
 // and returns the running pod (so callers can read its scheduled node).
 func runTestPod(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, name string, containers []corev1.Container, pc testPodConfig) *corev1.Pod {
@@ -552,24 +639,10 @@ func runTestPod(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, n
 		t.Fatalf("Failed to build Pod %s: %v", name, err)
 	}
 
-	if _, err := c.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("Failed to create Pod: %v", err)
-	}
+	createTestPod(ctx, t, c, pod)
 
 	t.Logf("Waiting for Pod %s to be running...", name)
-	var running *corev1.Pod
-	err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		p, err := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		if p.Status.Phase == corev1.PodRunning {
-			running = p
-			return true, nil
-		}
-		return false, nil
-	})
-
+	running, err := waitForPodsRunning(ctx, c, ns, []string{name}, time.Minute)
 	if err != nil {
 		phase := "unknown"
 		if p, gerr := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); gerr == nil {
@@ -577,7 +650,7 @@ func runTestPod(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, n
 		}
 		t.Fatalf("Pod %s failed to reach Running phase within 1m. Current phase: %s, Error: %v", name, phase, err)
 	}
-	return running
+	return running[name]
 }
 
 // deletePodAndWait deletes a pod and waits until the pod AND any
@@ -587,15 +660,17 @@ func runTestPod(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, n
 // garbage-collected asynchronously after pod deletion). known is the pod as
 // last observed by the caller (may be nil) — it supplies the generated claim
 // names when the live pod can no longer be fetched.
-func deletePodAndWait(ctx context.Context, t *testing.T, c kubernetes.Interface, ns, name string, known *corev1.Pod) {
-	claimNames, err := podGeneratedClaims(ctx, c, ns, name, known)
-	if err != nil {
-		// Claim capture failed but deletion must still proceed.
-		t.Errorf("Failed to capture generated ResourceClaims of Pod %s (claim-release wait may be incomplete): %v", name, err)
+func deletePodAndWait(ctx context.Context, c kubernetes.Interface, ns, name string, known *corev1.Pod) error {
+	claimNames, captureErr := podGeneratedClaims(ctx, c, ns, name, known)
+	releaseErr := deleteAndAwaitRelease(ctx, c, ns, name, claimNames)
+	if releaseErr == nil {
+		return nil
 	}
-	if err := deleteAndAwaitRelease(ctx, c, ns, name, claimNames); err != nil {
-		t.Errorf("Cleanup of Pod %s incomplete; subsequent accelerator tests may race its device/claim release: %v", name, err)
+	if captureErr != nil {
+		captureErr = fmt.Errorf("failed to capture generated ResourceClaims of Pod %s: %w", name, captureErr)
 	}
+	releaseErr = fmt.Errorf("cleanup of Pod %s incomplete: %w", name, releaseErr)
+	return errors.Join(captureErr, releaseErr)
 }
 
 // podGeneratedClaims returns the names of template-generated ResourceClaims
@@ -668,20 +743,48 @@ func podOwnedClaims(ctx context.Context, c kubernetes.Interface, ns, podName str
 // gone — generated claims are garbage-collected asynchronously and may
 // outlive the pod.
 func deleteAndAwaitRelease(ctx context.Context, c kubernetes.Interface, ns, name string, claimNames []string) error {
-	err := c.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete pod: %w", err)
+	var podAlreadyGone bool
+	var lastAPIError error
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		err := c.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{})
+		switch {
+		case err == nil:
+			lastAPIError = nil
+			return true, nil
+		case apierrors.IsNotFound(err):
+			lastAPIError = nil
+			podAlreadyGone = true
+			return true, nil
+		case isRetryableAPIError(err):
+			lastAPIError = err
+			return false, nil
+		default:
+			return false, err
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete pod%s: %w", lastAPIErrorSuffix(lastAPIError), err)
 	}
-	if err == nil {
+	if !podAlreadyGone {
+		var lastAPIError error
 		err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
 			_, err := c.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
+			switch {
+			case apierrors.IsNotFound(err):
+				lastAPIError = nil
 				return true, nil
+			case err == nil:
+				lastAPIError = nil
+				return false, nil
+			case isRetryableAPIError(err):
+				lastAPIError = err
+				return false, nil
+			default:
+				return false, err
 			}
-			return false, err
 		})
 		if err != nil {
-			return fmt.Errorf("pod not deleted before the cleanup deadline: %w", err)
+			return fmt.Errorf("pod not deleted before the cleanup deadline%s: %w", lastAPIErrorSuffix(lastAPIError), err)
 		}
 	}
 
@@ -707,20 +810,27 @@ func deleteAndAwaitRelease(ctx context.Context, c kubernetes.Interface, ns, name
 	}
 
 	for _, claimName := range claimNames {
+		var lastAPIError error
 		err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
 			claim, err := c.ResourceV1().ResourceClaims(ns).Get(ctx, claimName, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
+			switch {
+			case apierrors.IsNotFound(err):
+				lastAPIError = nil
 				return true, nil
-			}
-			if err != nil {
+			case err != nil && isRetryableAPIError(err):
+				lastAPIError = err
+				return false, nil
+			case err != nil:
 				return false, err
 			}
+			lastAPIError = nil
 			// A deallocated claim no longer holds devices even if the object
 			// briefly outlives the pod before garbage collection.
 			return claim.Status.Allocation == nil, nil
 		})
 		if err != nil {
-			return fmt.Errorf("generated ResourceClaim %s not released before the cleanup deadline: %w", claimName, err)
+			return fmt.Errorf("generated ResourceClaim %s not released before the cleanup deadline%s: %w",
+				claimName, lastAPIErrorSuffix(lastAPIError), err)
 		}
 	}
 	return nil
@@ -786,4 +896,22 @@ func acceleratorProbingContainer(name string, cfg AcceleratorConfig) corev1.Cont
 
 func randomNamespaceName(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, rand.String(5))
+}
+
+func lastAPIErrorSuffix(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("; last API error: %v", err)
+}
+
+func isRetryableAPIError(err error) bool {
+	return apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsInternalError(err) ||
+		utilnet.IsProbableEOF(err) ||
+		utilnet.IsConnectionReset(err) ||
+		utilnet.IsHTTP2ConnectionLost(err)
 }

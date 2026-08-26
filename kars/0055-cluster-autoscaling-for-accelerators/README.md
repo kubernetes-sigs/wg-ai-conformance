@@ -31,6 +31,12 @@ Prepare a node pool with N nodes, configured with a specific accelerator type, w
 
 The test verifies that a cluster autoscaler running on the platform scales node groups up and down based on pending pods requesting accelerator resources.
 
+This requirement is conditional. If the platform does not provide a cluster
+autoscaler or an equivalent mechanism, participants may mark
+`cluster_autoscaling` as `N/A` with a justification and skip this automated
+test. Platforms that provide such a mechanism must run the test and configure
+the provider-specific node-pool label described below.
+
 1. **Setup**: Configure a node pool with N nodes, each providing exactly 1 accelerator of type A, with a minimum size of N and a maximum size of at least N+1.
 
 2. **Scale-up case**: Create N+1 Pods, each requesting one accelerator of type A from the pool. Verify that at least one Pod is initially `Pending`, the node count grows to N+1, and the Pending Pod transitions to `Running`.
@@ -38,6 +44,8 @@ The test verifies that a cluster autoscaler running on the platform scales node 
 3. **Scale-down case**: Delete the workload that triggered the scale-up. Verify that the autoscaler removes the now-idle accelerator node, returning the pool to its minimum size N.
 
 4. **Cleanup**: Delete remaining test resources and restore the node pool to its original configuration.
+
+This is implemented by `TestAcceleratorClusterAutoscaling` in the AI conformance test suite (see [test/cluster_autoscaling_test.go](../../test/cluster_autoscaling_test.go)). The test uses a provider-supplied node-pool label and required Pod anti-affinity to place one accelerator-requesting Pod on each baseline node. It validates device-plugin capacity directly and uses isolated baseline allocations plus a Pending trigger to validate effective DRA capacity. The pool must have no competing workloads or accelerator demand. The additional trigger Pod carries neither the baseline run label nor anti-affinity, so exhausted accelerator capacity is its only expected unsatisfied target-pool constraint. The test verifies that the selected pool gains Ready capacity, the Pod runs on a Node UID outside the stable baseline, and the pool returns to the original Ready, schedulable baseline after the Pod is deleted. A retained NotReady Node object does not fail scale-down because Kubernetes does not provide a portable cloud node-group size API. The test observes a preconfigured pool and does not modify provider node-pool settings.
 
 ## Implementation History
 

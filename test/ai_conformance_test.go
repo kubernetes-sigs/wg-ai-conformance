@@ -4,14 +4,8 @@ import (
 	"context"
 	"flag"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // TestSecureAcceleratorAccess verifies the Secure Accelerator Access requirement.
@@ -22,48 +16,14 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		flag.Parse()
 	}
 
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if *kubeconfig != "" {
-		loadingRules.ExplicitPath = *kubeconfig
-	}
-
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
-	if err != nil {
-		t.Fatalf("Error building kubeconfig: %v", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		t.Fatalf("Error creating kubernetes client: %v", err)
-	}
+	clientset := getClientset(t)
 
 	ctx := context.Background()
 	namespace := randomNamespaceName("ai-conformance")
 
 	t.Cleanup(func() {
-		t.Logf("Cleaning up namespace %s...", namespace)
-		err := clientset.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
-		if apierrors.IsNotFound(err) {
-			// The test failed before the namespace was created; nothing to clean up.
-			return
-		}
-		if err != nil {
-			t.Errorf("Failed to cleanup namespace: %v", err)
-		}
-
-		// Poll until the namespace is actually gone; this is needed because the namespace needs to release resources for rerunning tests
-		err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-			_, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				return true, nil
-			}
-			return false, nil
-		})
-		if err != nil {
-			t.Errorf("CLEANUP FAILURE: Failed to delete namespace %s: %v. "+
-				"Please ensure this namespace is terminated manually to avoid resource leaks."+
-				"Rerunning the tests might fail if the namespace is not deleted.",
-				namespace, err)
+		if err := deleteNamespaceAndWait(ctx, t, clientset, namespace); err != nil {
+			t.Errorf("CLEANUP FAILURE: %v. Please ensure this namespace is terminated manually to avoid resource leaks.", err)
 		}
 	})
 
@@ -85,7 +45,9 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		podName := "pos-pod"
 		var pod *corev1.Pod
 		t.Cleanup(func() {
-			deletePodAndWait(ctx, t, clientset, namespace, podName, pod)
+			if err := deletePodAndWait(ctx, clientset, namespace, podName, pod); err != nil {
+				t.Errorf("Cleanup of Pod %s incomplete; subsequent accelerator tests may race its device/claim release: %v", podName, err)
+			}
 		})
 		pod = runTestPod(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("prober", cfg)},
 			testPodConfig{grantAccelerator: true, mode: mode, cfg: cfg})
@@ -108,7 +70,9 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		podName := "neg-pod"
 		var pod *corev1.Pod
 		t.Cleanup(func() {
-			deletePodAndWait(ctx, t, clientset, namespace, podName, pod)
+			if err := deletePodAndWait(ctx, clientset, namespace, podName, pod); err != nil {
+				t.Errorf("Cleanup of Pod %s incomplete; subsequent accelerator tests may race its device/claim release: %v", podName, err)
+			}
 		})
 		pod = runTestPod(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("prober", cfg)},
 			testPodConfig{grantAccelerator: false, mode: mode, nodeName: acceleratorNode, cfg: cfg})
@@ -120,7 +84,9 @@ func TestSecureAcceleratorAccess(t *testing.T) {
 		podName := "multi-container-pod"
 		var pod *corev1.Pod
 		t.Cleanup(func() {
-			deletePodAndWait(ctx, t, clientset, namespace, podName, pod)
+			if err := deletePodAndWait(ctx, clientset, namespace, podName, pod); err != nil {
+				t.Errorf("Cleanup of Pod %s incomplete; subsequent accelerator tests may race its device/claim release: %v", podName, err)
+			}
 		})
 		pod = runTestPod(ctx, t, clientset, namespace, podName, []corev1.Container{acceleratorProbingContainer("authorized", cfg), acceleratorProbingContainer("unauthorized", cfg)},
 			testPodConfig{grantAccelerator: true, mode: mode, cfg: cfg})
