@@ -109,10 +109,28 @@ The tests are designed to be vendor-neutral where possible, but hardware-level p
 
 If a specific test is not applicable to your platform (i.e., you answered "N/A" to the corresponding question in the questionnaire), you may "opt-out" of that specific sub-test.
 
-## Automation & CI
+## Automation, CI & Certification Submissions
 
-For CI environments, you can output the results in machine-readable JSON format, which can be converted to JUnit/XML for reporting.
+For CI environments and certification submissions, you can output the results in both human-readable and machine-readable formats. Use the following commands to generate the required artifacts for your `KubernetesAIConformance-1.NN.yaml` evidence:
+
+### Generating Test Artifacts
 
 ```bash
+# 1. Capture full output log (e2e.log)
+go test -v ./test | tee e2e.log
+
+# 2. Generate machine-readable JSON (results.json)
 go test -v ./test -json > results.json
+
+# 3. Generate JUnit XML report (junit.xml)
+# Option A: Using gotestsum (Recommended - runs via go run)
+go run gotest.tools/gotestsum@latest --junitfile junit.xml -- ./test
+# Option B: Using go-junit-report
+go test -v ./test 2>&1 | go run github.com/jstemmer/go-junit-report/v2@latest > junit.xml
 ```
+
+### Using Test Results for Certification (Hybrid Approach)
+
+When submitting your conformance results for v1.37+, you can use the generated `e2e.log` and `results.json` (or `junit.xml`) as evidence for automated test cases. Link them in your `KubernetesAIConformance-1.NN.yaml` file under the respective requirement's `evidence` field.
+
+
