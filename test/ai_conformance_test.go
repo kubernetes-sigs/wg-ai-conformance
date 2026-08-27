@@ -12,6 +12,9 @@ import (
 // A Pod without an accelerator request must NOT see device nodes or have access to drivers.
 // Ref: https://github.com/cncf/k8s-ai-conformance/blob/main/docs/AIConformance-1.35.yaml#L83-L89
 func TestSecureAcceleratorAccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping cluster E2E test in short mode")
+	}
 	if !flag.Parsed() {
 		flag.Parse()
 	}

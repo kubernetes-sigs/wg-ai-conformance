@@ -15,7 +15,7 @@ By default, the test looks for your kubeconfig at `~/.kube/config`. You can over
 
 ```bash
 export KUBECONFIG=/path/to/my/config # Optional
-go test -v ./test [-run <TestName>] [-kubeconfig=<path/to/kubeconfig>] [-accelerator-type=<type>] [-allocation-mode=<mode>]
+go test -v ./test [-run <TestName>] [flags...]
 ```
 
 Run `go test ./test -args -help` for details about each flag.
@@ -23,7 +23,7 @@ Run `go test ./test -args -help` for details about each flag.
 The allocation-mode detection, pod-construction, and device-probe logic also has hermetic unit tests that need no cluster (Kubernetes API tests use a fake clientset):
 
 ```bash
-go test -v ./test -run 'Test(DetectAllocationMode|ExtendedResourceGuardFailsClosed|LookupAcceleratorConfig|BuildTestPod|PodGeneratedClaims|DeleteAndAwaitRelease|AcceleratorProbeCommand|LogsContainExactLine)$'
+go test -v -short ./test
 ```
 
 ### Test Cases Covered
@@ -36,78 +36,21 @@ go test -v ./test -run 'Test(DetectAllocationMode|ExtendedResourceGuardFailsClos
 
 ### Accelerator Cluster Autoscaling
 
-The autoscaling test observes a preconfigured accelerator pool; it does not
-modify provider node-pool settings. Use a node label that uniquely identifies
-the target pool. The example below uses the AKS `agentpool` label; replace it
-with the corresponding label for your platform.
+The autoscaling test observes a preconfigured accelerator pool. The test requires an explicit `-autoscaler-node-pool-label` flag and is **skipped by default** if the flag is unset. 
 
-The test is skipped when `-autoscaler-node-pool-label` is unset. Platforms that
-do not provide a cluster autoscaler or equivalent mechanism may mark the
-`cluster_autoscaling` requirement as `N/A` with a justification and leave the
-flag unset. Platforms that provide autoscaling must configure the flag and run
-the test; a skipped result is not evidence that the requirement is implemented.
+If your platform provides cluster autoscaling, you must set this flag and run the test. If cluster autoscaling is not supported (N/A), you can leave the flag unset to skip the test.
 
-Baseline Pods use hostname anti-affinity to occupy distinct pool nodes. The
-trigger Pod carries neither that anti-affinity nor its matching label, so
-exhausted accelerator capacity is the only target-pool constraint that can
-leave it Pending. A PodDisruptionBudget protects the baseline Pods while the
-added node is idle and eligible for scale-down. The test fails if pool
-membership changes or foreign accelerator demand appears during scale-up.
+Scale-up and scale-down can take significantly longer than Go's default test timeout, so it is recommended to use `-timeout 75m` or a larger value. The test also includes configurable observation windows (`-autoscaler-scale-up-timeout`, `-autoscaler-scale-down-timeout`, etc.) since node provisioning times vary heavily by cloud provider. 
 
-Device-plugin mode rejects extended resources backed by a DRA DeviceClass and
-checks every observed pool node for exactly one allocatable extended resource.
-DRA has no portable per-node allocatable count, so the isolated baseline Pods
-and Pending trigger verify that the selected DeviceClass has effective capacity
-for exactly `N` allocations before scale-up.
-
-The suite-wide `-allocation-mode` flag controls the allocation mechanism for
-all accelerator tests. Its default `auto` mode prefers DRA when usable and
-otherwise falls back to the device plugin. Use an explicit mode when testing a
-hybrid cluster where the selected pool supports only one mechanism.
-
-Scale-up and scale-down can take significantly longer than Go's default test
-timeout, so use `-timeout 75m` or a larger value.
-
-```bash
-go test -v ./test \
-  -run TestAcceleratorClusterAutoscaling \
-  -timeout 75m \
-  -accelerator-type=nvidia \
-  -allocation-mode=device-plugin \
-  -autoscaler-node-pool-label=agentpool=gpupool
-```
-
-To test DRA autoscaling, the cluster autoscaler must have DRA support enabled:
-
-```bash
-go test -v ./test \
-  -run TestAcceleratorClusterAutoscaling \
-  -timeout 75m \
-  -accelerator-type=nvidia \
-  -allocation-mode=dra \
-  -autoscaler-node-pool-label=agentpool=gpupool
-```
-
-The following optional flags control observation windows:
-
-- `-autoscaler-pending-timeout` (default `2m`)
-- `-autoscaler-scale-up-timeout` (default `20m`)
-- `-autoscaler-scale-down-timeout` (default `30m`)
-- `-autoscaler-stability-window` (default `30s`)
-
-Scale-down passes when the original baseline Node UIDs remain Ready and schedulable, the added
-Node UID is no longer Ready or has been deleted, and the selected pool has
-exactly `N` Ready Nodes for the stability window. The Kubernetes API cannot
-portably prove a cloud provider's node-group size, and Cluster Autoscaler does
-not itself guarantee deletion of the Kubernetes `Node` object.
+Run `go test ./test -args -help` for details on all supported flags.
 
 ## Vendor Customization & Neutrality
 
 The tests are designed to be vendor-neutral where possible, but hardware-level probing often requires vendor-specific configuration. If your platform uses different hardware/software not covered by the tests, please file an issue to request support for your hardware/software. In the meantime, you will need to certify manually.
 
-### Opting Out
+### Opting Out (N/A Requirements)
 
-If a specific test is not applicable to your platform (i.e., you answered "N/A" to the corresponding question in the questionnaire), you may "opt-out" of that specific sub-test.
+If a specific requirement is not applicable to your platform (i.e., you answered "N/A" in the conformance checklist), you may skip or "opt-out" of that specific sub-test. To skip tests during execution, you can use test-specific flags (if available) or use the `go test -run <regex>` flag to select only the applicable tests. When submitting your results, ensure that you provide a clear explanation for why the requirement is considered N/A.
 
 ## Automation, CI & Certification Submissions
 
@@ -131,6 +74,6 @@ go test -v ./test 2>&1 | go run github.com/jstemmer/go-junit-report/v2@latest > 
 
 ### Using Test Results for Certification (Hybrid Approach)
 
-When submitting your conformance results for v1.37+, you can use the generated `e2e.log` and `results.json` (or `junit.xml`) as evidence for automated test cases. Link them in your `KubernetesAIConformance-1.NN.yaml` file under the respective requirement's `evidence` field.
+Starting with v1.37, it is **recommended** that any requirement covered by an automated test is verified using this test suite. When submitting your conformance results, you can use the generated `e2e.log` and `results.json` (or `junit.xml`) as evidence for these automated test cases. Link them in your `KubernetesAIConformance-1.NN.yaml` file under the respective requirement's `evidence` field.
 
 

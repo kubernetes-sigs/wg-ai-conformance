@@ -59,6 +59,9 @@ func init() {
 // returns to its baseline size after the Pod is deleted.
 // Ref: https://github.com/kubernetes-sigs/ai-conformance/tree/main/kars/0055-cluster-autoscaling-for-accelerators
 func TestAcceleratorClusterAutoscaling(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping cluster E2E test in short mode")
+	}
 	if !flag.Parsed() {
 		flag.Parse()
 	}

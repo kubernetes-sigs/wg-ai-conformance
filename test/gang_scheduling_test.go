@@ -22,6 +22,9 @@ import (
 // to test all-or-nothing scheduling behavior without coupling to a specific implementation.
 // Ref: https://github.com/kubernetes-sigs/ai-conformance/blob/main/kars/0053-gang-scheduling/README.md
 func TestGangScheduling(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping cluster E2E test in short mode")
+	}
 	clientset := getClientset(t)
 
 	ctx := context.Background()
@@ -94,7 +97,7 @@ func TestGangScheduling(t *testing.T) {
 
 func buildGenericGangSchedulingJob(ns, name string, parallelism int, cpuReq, memReq string) *batchv1.Job {
 	parallelism32 := int32(parallelism)
-	
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
