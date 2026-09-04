@@ -65,13 +65,16 @@ func TestGangScheduling(t *testing.T) {
 		jobName := "pos-job"
 		job := buildGenericGangSchedulingJob(namespace, jobName, 2, "100m", "128Mi")
 
+		t.Logf("Creating positive test job %s...", jobName)
+		if err := applyGangSchedulerAdapter(ctx, t, dynamicClient, job); err != nil {
+			t.Fatalf("Failed to apply gang scheduler adapter: %v", err)
+		}
+
 		t.Cleanup(func() {
 			deletePolicy := metav1.DeletePropagationBackground
 			_ = clientset.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &deletePolicy})
 		})
 
-		t.Logf("Creating positive test job %s...", jobName)
-		applyVolcanoAdapter(ctx, t, dynamicClient, job)
 		if _, err := clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 			t.Fatalf("Failed to create positive job: %v", err)
 		}
@@ -83,13 +86,16 @@ func TestGangScheduling(t *testing.T) {
 		jobName := "neg-job"
 		job := buildGenericGangSchedulingJob(namespace, jobName, 1000, "100m", "128Mi")
 
+		t.Logf("Creating negative test job %s...", jobName)
+		if err := applyGangSchedulerAdapter(ctx, t, dynamicClient, job); err != nil {
+			t.Fatalf("Failed to apply gang scheduler adapter: %v", err)
+		}
+
 		t.Cleanup(func() {
 			deletePolicy := metav1.DeletePropagationBackground
 			_ = clientset.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &deletePolicy})
 		})
 
-		t.Logf("Creating negative test job %s...", jobName)
-		applyVolcanoAdapter(ctx, t, dynamicClient, job)
 		if _, err := clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 			t.Fatalf("Failed to create negative job: %v", err)
 		}
@@ -261,11 +267,20 @@ func buildResourceList(cpuReq, memReq string) corev1.ResourceList {
 	}
 }
 
-func applyVolcanoAdapter(ctx context.Context, t *testing.T, dynamicClient dynamic.Interface, job *batchv1.Job) {
-	if *gangSchedulerName != "volcano" {
-		return
+func applyGangSchedulerAdapter(ctx context.Context, t *testing.T, dynamicClient dynamic.Interface, job *batchv1.Job) error {
+	switch *gangSchedulerName {
+	case "volcano":
+		applyVolcanoAdapter(ctx, t, dynamicClient, job)
+		return nil
+	case "kueue":
+		// Kueue handles gang scheduling automatically via annotations/labels, no extra API resources needed here.
+		return nil
+	default:
+		return fmt.Errorf("unsupported gang-scheduler-name %q", *gangSchedulerName)
 	}
+}
 
+func applyVolcanoAdapter(ctx context.Context, t *testing.T, dynamicClient dynamic.Interface, job *batchv1.Job) {
 	t.Logf("Applying Volcano adapter for job %s...", job.Name)
 
 	// 1. Mutate Job
@@ -275,6 +290,11 @@ func applyVolcanoAdapter(ctx context.Context, t *testing.T, dynamicClient dynami
 	}
 	job.Spec.Template.Annotations["scheduling.k8s.io/group-name"] = job.Name
 	job.Spec.Template.Annotations["scheduling.volcano.sh/group-name"] = job.Name
+
+	var minMember int64 = 1
+	if job.Spec.Parallelism != nil {
+		minMember = int64(*job.Spec.Parallelism)
+	}
 
 	// 2. Create PodGroup
 	podGroup := &unstructured.Unstructured{
@@ -286,7 +306,7 @@ func applyVolcanoAdapter(ctx context.Context, t *testing.T, dynamicClient dynami
 				"namespace": job.Namespace,
 			},
 			"spec": map[string]interface{}{
-				"minMember": int64(*job.Spec.Parallelism),
+				"minMember": minMember,
 				"queue":     "default",
 			},
 		},
@@ -304,6 +324,9 @@ func applyVolcanoAdapter(ctx context.Context, t *testing.T, dynamicClient dynami
 
 	t.Cleanup(func() {
 		t.Logf("Cleaning up Volcano PodGroup %s...", job.Name)
-		_ = dynamicClient.Resource(gvr).Namespace(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{})
+		err := dynamicClient.Resource(gvr).Namespace(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("Failed to clean up Volcano PodGroup %s: %v", job.Name, err)
+		}
 	})
 }

@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
@@ -94,9 +95,8 @@ func init() {
 		"Name of the gang scheduler being tested (e.g. 'volcano'). Used to apply adapter logic if required.")
 }
 
-// getClientset creates a Kubernetes clientset using the kubeconfig flag.
-// Shared helper to avoid duplicating kubeconfig loading across test files.
-func getClientset(t *testing.T) kubernetes.Interface {
+// getClientConfig creates a REST client config using the kubeconfig flag.
+func getClientConfig(t *testing.T) *rest.Config {
 	t.Helper()
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if *kubeconfig != "" {
@@ -106,7 +106,14 @@ func getClientset(t *testing.T) kubernetes.Interface {
 	if err != nil {
 		t.Fatalf("Error building kubeconfig: %v", err)
 	}
-	clientset, err := kubernetes.NewForConfig(config)
+	return config
+}
+
+// getClientset creates a Kubernetes clientset using the kubeconfig flag.
+// Shared helper to avoid duplicating kubeconfig loading across test files.
+func getClientset(t *testing.T) kubernetes.Interface {
+	t.Helper()
+	clientset, err := kubernetes.NewForConfig(getClientConfig(t))
 	if err != nil {
 		t.Fatalf("Error creating kubernetes client: %v", err)
 	}
@@ -158,15 +165,8 @@ func deleteNamespaceAndWait(ctx context.Context, t *testing.T, c kubernetes.Inte
 
 // getDynamicClient creates a dynamic Kubernetes client using the kubeconfig flag.
 func getDynamicClient(t *testing.T) dynamic.Interface {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if *kubeconfig != "" {
-		loadingRules.ExplicitPath = *kubeconfig
-	}
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
-	if err != nil {
-		t.Fatalf("Error building kubeconfig: %v", err)
-	}
-	client, err := dynamic.NewForConfig(config)
+	t.Helper()
+	client, err := dynamic.NewForConfig(getClientConfig(t))
 	if err != nil {
 		t.Fatalf("Error creating dynamic client: %v", err)
 	}
