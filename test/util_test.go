@@ -92,7 +92,7 @@ func init() {
 	gangNegativeWindow = flag.Duration("gang-negative-window", 30*time.Second,
 		"Duration to observe the negative gang scheduling test job to verify no pods are partially scheduled.")
 	gangSchedulerName = flag.String("gang-scheduler-name", "",
-		"Name of the gang scheduler being tested (e.g. 'volcano'). Used to apply adapter logic if required.")
+		"Name of the gang scheduler being tested (currently supports: 'kueue' or 'volcano'). Used to apply adapter logic if required.")
 }
 
 // getClientConfig creates a REST client config using the kubeconfig flag.
