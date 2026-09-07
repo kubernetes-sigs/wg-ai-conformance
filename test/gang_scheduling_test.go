@@ -13,7 +13,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -26,6 +29,7 @@ func TestGangScheduling(t *testing.T) {
 		t.Skip("Skipping cluster E2E test in short mode")
 	}
 	clientset := getClientset(t)
+	dynamicClient := getDynamicClient(t)
 
 	ctx := context.Background()
 	namespace := *gangSchedulerNamespace
@@ -64,12 +68,16 @@ func TestGangScheduling(t *testing.T) {
 		jobName := "pos-job"
 		job := buildGenericGangSchedulingJob(namespace, jobName, 2, "100m", "128Mi")
 
+		t.Logf("Creating positive test job %s...", jobName)
+		if err := applyGangSchedulerAdapter(ctx, t, dynamicClient, job); err != nil {
+			t.Fatalf("Failed to apply gang scheduler adapter: %v", err)
+		}
+
 		t.Cleanup(func() {
 			deletePolicy := metav1.DeletePropagationBackground
 			_ = clientset.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &deletePolicy})
 		})
 
-		t.Logf("Creating positive test job %s...", jobName)
 		if _, err := clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 			t.Fatalf("Failed to create positive job: %v", err)
 		}
@@ -81,12 +89,16 @@ func TestGangScheduling(t *testing.T) {
 		jobName := "neg-job"
 		job := buildGenericGangSchedulingJob(namespace, jobName, 1000, "100m", "128Mi")
 
+		t.Logf("Creating negative test job %s...", jobName)
+		if err := applyGangSchedulerAdapter(ctx, t, dynamicClient, job); err != nil {
+			t.Fatalf("Failed to apply gang scheduler adapter: %v", err)
+		}
+
 		t.Cleanup(func() {
 			deletePolicy := metav1.DeletePropagationBackground
 			_ = clientset.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &deletePolicy})
 		})
 
-		t.Logf("Creating negative test job %s...", jobName)
 		if _, err := clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 			t.Fatalf("Failed to create negative job: %v", err)
 		}
@@ -256,4 +268,68 @@ func buildResourceList(cpuReq, memReq string) corev1.ResourceList {
 		corev1.ResourceCPU:    resource.MustParse(cpuReq),
 		corev1.ResourceMemory: resource.MustParse(memReq),
 	}
+}
+
+func applyGangSchedulerAdapter(ctx context.Context, t *testing.T, dynamicClient dynamic.Interface, job *batchv1.Job) error {
+	switch *gangSchedulerName {
+	case "volcano":
+		applyVolcanoAdapter(ctx, t, dynamicClient, job)
+		return nil
+	case "kueue":
+		// Kueue handles gang scheduling automatically via annotations/labels, no extra API resources needed here.
+		return nil
+	default:
+		return fmt.Errorf("unsupported gang-scheduler-name %q", *gangSchedulerName)
+	}
+}
+
+func applyVolcanoAdapter(ctx context.Context, t *testing.T, dynamicClient dynamic.Interface, job *batchv1.Job) {
+	t.Logf("Applying Volcano adapter for job %s...", job.Name)
+
+	// 1. Mutate Job
+	job.Spec.Template.Spec.SchedulerName = "volcano"
+	if job.Spec.Template.Annotations == nil {
+		job.Spec.Template.Annotations = make(map[string]string)
+	}
+	job.Spec.Template.Annotations["scheduling.k8s.io/group-name"] = job.Name
+	job.Spec.Template.Annotations["scheduling.volcano.sh/group-name"] = job.Name
+
+	var minMember int64 = 1
+	if job.Spec.Parallelism != nil {
+		minMember = int64(*job.Spec.Parallelism)
+	}
+
+	// 2. Create PodGroup
+	podGroup := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "scheduling.volcano.sh/v1beta1",
+			"kind":       "PodGroup",
+			"metadata": map[string]interface{}{
+				"name":      job.Name,
+				"namespace": job.Namespace,
+			},
+			"spec": map[string]interface{}{
+				"minMember": minMember,
+				"queue":     "default",
+			},
+		},
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "scheduling.volcano.sh",
+		Version:  "v1beta1",
+		Resource: "podgroups",
+	}
+
+	if _, err := dynamicClient.Resource(gvr).Namespace(job.Namespace).Create(ctx, podGroup, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Failed to create Volcano PodGroup for job %s: %v", job.Name, err)
+	}
+
+	t.Cleanup(func() {
+		t.Logf("Cleaning up Volcano PodGroup %s...", job.Name)
+		err := dynamicClient.Resource(gvr).Namespace(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("Failed to clean up Volcano PodGroup %s: %v", job.Name, err)
+		}
+	})
 }

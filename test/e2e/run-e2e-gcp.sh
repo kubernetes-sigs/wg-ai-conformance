@@ -31,6 +31,7 @@ GCE_IMAGE_FAMILY="${GCE_IMAGE_FAMILY:-common-cu129-ubuntu-2404-nvidia-580}"
 GCE_IMAGE_PROJECT="${GCE_IMAGE_PROJECT:-deeplearning-platform-release}"
 K8S_VERSION="${K8S_VERSION:-v1.35.0}"
 GPU_OPERATOR_VERSION="${GPU_OPERATOR_VERSION:-v26.3.1}"
+VOLCANO_VERSION="${VOLCANO_VERSION:-v1.9.0}"
 GANG_SCHEDULER="${GANG_SCHEDULER:-kueue}"
 BUILD_ID="${BUILD_ID:-$(date +%s)}"
 VM_NAME="ai-conformance-e2e-${BUILD_ID}"
@@ -331,9 +332,28 @@ EOF
 
   echo "Waiting for ClusterQueue to be active..."
   kubectl wait --for=condition=Active clusterqueue/e2e-cq --timeout=60s
+elif [ "${GANG_SCHEDULER}" = "volcano" ]; then
+  echo "Installing Volcano..."
+  kubectl apply -f "https://raw.githubusercontent.com/volcano-sh/volcano/${VOLCANO_VERSION}/installer/volcano-development.yaml"
+
+  echo "Waiting for Volcano controllers to be ready..."
+  kubectl rollout status deployment -n volcano-system volcano-admission --timeout=5m
+  kubectl rollout status deployment -n volcano-system volcano-controllers --timeout=5m
+  kubectl rollout status deployment -n volcano-system volcano-scheduler --timeout=5m
+
+  echo "Creating test namespace..."
+  kubectl create namespace ai-conformance-gang-scheduling --dry-run=client -o yaml | kubectl apply -f -
 fi
 
 REMOTE_STACK
+
+echo "Preparing go test arguments..."
+if [ "${GANG_SCHEDULER}" = "kueue" ]; then
+    GANG_LABELS="-gang-job-labels=kueue.x-k8s.io/queue-name=e2e-lq"
+else
+    GANG_LABELS=""
+fi
+GANG_ARGS="-gang-scheduler-name=${GANG_SCHEDULER} ${GANG_LABELS}"
 
 echo "================================================================"
 echo "4. Executing AI Conformance Test Suite (test/)"
@@ -350,7 +370,7 @@ go test -v ./test/... \
     -accelerator-type=nvidia \
     -allocation-mode=auto \
     -gang-scheduler-namespace=ai-conformance-gang-scheduling \
-    -gang-job-labels="kueue.x-k8s.io/queue-name=e2e-lq" \
+    ${GANG_ARGS} \
     -json | tee _artifacts/results.json
 REMOTE_TEST
 
